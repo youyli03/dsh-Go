@@ -33180,6 +33180,246 @@ abstract class L10n {
   /// **'精简 简洁 历史 工具 传输 流量 远程 compact slim lite'**
   String get searchKwRemoteCompactHistory;
 
+  /// No description provided for @remoteControlTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'远控'**
+  String get remoteControlTitle;
+
+  /// No description provided for @remoteControlSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'通过 SSH 隧道连接外部智能体'**
+  String get remoteControlSubtitle;
+
+  /// No description provided for @rcCopied.
+  ///
+  /// In zh, this message translates to:
+  /// **'已复制'**
+  String get rcCopied;
+
+  /// No description provided for @rcConnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'已连接'**
+  String get rcConnected;
+
+  /// No description provided for @rcConnecting.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接中'**
+  String get rcConnecting;
+
+  /// No description provided for @rcReconnecting.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新连接中'**
+  String get rcReconnecting;
+
+  /// No description provided for @rcConnectionError.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接失败'**
+  String get rcConnectionError;
+
+  /// No description provided for @rcLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在读取远控状态'**
+  String get rcLoading;
+
+  /// No description provided for @rcStopped.
+  ///
+  /// In zh, this message translates to:
+  /// **'未启动'**
+  String get rcStopped;
+
+  /// No description provided for @rcConnection.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接'**
+  String get rcConnection;
+
+  /// No description provided for @rcUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'此版本不支持远控'**
+  String get rcUnavailable;
+
+  /// No description provided for @rcInvalidConfig.
+  ///
+  /// In zh, this message translates to:
+  /// **'请填写服务器、用户名、有效端口、可信指纹和私钥（已保存的私钥可沿用）。'**
+  String get rcInvalidConfig;
+
+  /// No description provided for @rcError.
+  ///
+  /// In zh, this message translates to:
+  /// **'远控失败（{code}）'**
+  String rcError(String code);
+
+  /// No description provided for @rcActivity.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在调用 {tool}'**
+  String rcActivity(String tool);
+
+  /// No description provided for @rcStop.
+  ///
+  /// In zh, this message translates to:
+  /// **'停止远控'**
+  String get rcStop;
+
+  /// No description provided for @rcStart.
+  ///
+  /// In zh, this message translates to:
+  /// **'启动远控'**
+  String get rcStart;
+
+  /// No description provided for @rcApproveFingerprint.
+  ///
+  /// In zh, this message translates to:
+  /// **'SSH 主机 SHA256 指纹'**
+  String get rcApproveFingerprint;
+
+  /// No description provided for @rcCopyUrl.
+  ///
+  /// In zh, this message translates to:
+  /// **'复制服务器上的 MCP 地址'**
+  String get rcCopyUrl;
+
+  /// No description provided for @rcRotateToken.
+  ///
+  /// In zh, this message translates to:
+  /// **'更新 MCP 令牌'**
+  String get rcRotateToken;
+
+  /// No description provided for @rcPermission.
+  ///
+  /// In zh, this message translates to:
+  /// **'MCP 手机操控权限'**
+  String get rcPermission;
+
+  /// No description provided for @rcBlocked.
+  ///
+  /// In zh, this message translates to:
+  /// **'禁止'**
+  String get rcBlocked;
+
+  /// No description provided for @rcConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'按现有规则确认'**
+  String get rcConfirm;
+
+  /// No description provided for @rcTimed.
+  ///
+  /// In zh, this message translates to:
+  /// **'限时允许（5 分钟）'**
+  String get rcTimed;
+
+  /// No description provided for @rcSshConfig.
+  ///
+  /// In zh, this message translates to:
+  /// **'SSH 配置'**
+  String get rcSshConfig;
+
+  /// No description provided for @rcHost.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器地址'**
+  String get rcHost;
+
+  /// No description provided for @rcSshPort.
+  ///
+  /// In zh, this message translates to:
+  /// **'SSH 端口'**
+  String get rcSshPort;
+
+  /// No description provided for @rcUsername.
+  ///
+  /// In zh, this message translates to:
+  /// **'SSH 用户名'**
+  String get rcUsername;
+
+  /// No description provided for @rcRemotePort.
+  ///
+  /// In zh, this message translates to:
+  /// **'服务器回环端口'**
+  String get rcRemotePort;
+
+  /// No description provided for @rcPrivateKey.
+  ///
+  /// In zh, this message translates to:
+  /// **'请先复制完整的 SSH 私钥'**
+  String get rcPrivateKey;
+
+  /// No description provided for @rcKeySaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'已有保存的密钥'**
+  String get rcKeySaved;
+
+  /// No description provided for @rcAutoStart.
+  ///
+  /// In zh, this message translates to:
+  /// **'打开 App 时启动远控'**
+  String get rcAutoStart;
+
+  /// No description provided for @rcSave.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存 SSH 配置'**
+  String get rcSave;
+
+  /// No description provided for @rcVerifyFingerprint.
+  ///
+  /// In zh, this message translates to:
+  /// **'从可信来源取得服务器指纹并输入。不接受未验证的主机。'**
+  String get rcVerifyFingerprint;
+
+  /// No description provided for @rcCancel.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消'**
+  String get rcCancel;
+
+  /// No description provided for @rcCreateToken.
+  ///
+  /// In zh, this message translates to:
+  /// **'创建并复制 MCP 令牌'**
+  String get rcCreateToken;
+
+  /// No description provided for @rcRotateTokenHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'更新后旧令牌立即失效。新令牌会复制到剪贴板。'**
+  String get rcRotateTokenHint;
+
+  /// No description provided for @rcPassphrase.
+  ///
+  /// In zh, this message translates to:
+  /// **'SSH 私钥口令（如有）'**
+  String get rcPassphrase;
+
+  /// No description provided for @rcAllowExec.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许委托 DSH 执行提示词'**
+  String get rcAllowExec;
+
+  /// No description provided for @rcPasteKey.
+  ///
+  /// In zh, this message translates to:
+  /// **'从剪贴板粘贴 SSH 私钥'**
+  String get rcPasteKey;
+
+  /// No description provided for @rcKeyStaged.
+  ///
+  /// In zh, this message translates to:
+  /// **'已粘贴，保存配置后生效'**
+  String get rcKeyStaged;
+
   /// No description provided for @remotePairEntry.
   ///
   /// In zh, this message translates to:

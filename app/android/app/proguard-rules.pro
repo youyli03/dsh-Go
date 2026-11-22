@@ -26,3 +26,6 @@
 -dontwarn org.bouncycastle.**
 -keep class org.conscrypt.** { *; }
 -keep class io.github.muntashirakon.adb.** { *; }
+
+# JSch selects cryptography and authentication implementations by class name.
+-keep class com.jcraft.jsch.** { *; }

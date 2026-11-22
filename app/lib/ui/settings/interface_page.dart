@@ -52,6 +52,7 @@ class InterfacePage extends ConsumerWidget {
     final engine = ref.watch(engineSettingsProvider).value;
     final quickPanel = ref.watch(quickPanelProvider);
     final startup = ref.watch(appModeProvider.select((s) => s.startup));
+    final modes = ref.watch(availableAppModesProvider);
     return AppPage.list(
       title: l10n.hubSettingsInterface,
       children: [
@@ -61,7 +62,7 @@ class InterfacePage extends ConsumerWidget {
             SettingsSegmentTile<AppMode>(
               key: const ValueKey('interface-startup-mode'),
               title: l10n.modeStartup,
-              segments: [for (final m in AppMode.values) PillSegment(m, appModeShortLabel(l10n, m))],
+              segments: [for (final m in modes) PillSegment(m, appModeShortLabel(l10n, m))],
               selected: startup,
               onChanged: (m) => unawaited(ref.read(appModeProvider.notifier).setStartup(m)),
             ),

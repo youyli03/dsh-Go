@@ -26,6 +26,7 @@ import { get as httpsGet } from "node:https";
 import { createPluginConfig, pluginConfigUnavailable } from "./plugin-config.js";
 import { injectPromiseWithResolvers } from "./web-promise.js";
 import { createSessionDeletion, sessionDeletionUnavailable } from "./session-deletion.js";
+import { createExecRoutes, takeExecLaunchProof } from "./exec.js";
 import { createSpeechRoutes } from "./speech.js";
 import { createUsage } from "./usage.js";
 import { createCompanionRoutes } from "./companion/routes.js";
@@ -403,6 +404,8 @@ export function apply(ctx, config) {
     const nativeRoutes = createNativeRoutes(native, { beginUsage: usage.beginPlugin });
     pluginConfig = createPluginConfig(webCtx, { readBody, send });
     const sessionDeletion = createSessionDeletion(webCtx, { readBody, send });
+    const execRoutes = createExecRoutes(webCtx, { readBody, send, proofDigest: takeExecLaunchProof() });
+    webCtx.effect(() => () => execRoutes.dispose(), "dsh-go-bridge: native exec routes");
     const speechRoutes = createSpeechRoutes(webCtx, { send, fetch: options.speech?.fetch, apiKeyEnv: options.speech?.apiKeyEnv });
     webCtx.effect(() => () => speechRoutes.dispose(), "dsh-go-bridge: speech routes");
     const companionRoutes = createCompanionRoutes({ send, store: companionStore, recall: companionRecall, signals: companionSignals, ctx: webCtx, promptContext: companionPrompt });
@@ -432,6 +435,7 @@ export function apply(ctx, config) {
         if (body?.toString() !== "on" && body?.toString() !== "off") return send(res, 400);
         return send(res, 200, usage.pull(body.toString() === "on"));
       }
+      if (await execRoutes.handle(req, res, path)) return;
       if (await sessionDeletion.handle(req, res, path)) return;
       if (await pluginConfig.handle(req, res, path)) return;
       if (await speechRoutes.handle(req, res, path)) return;

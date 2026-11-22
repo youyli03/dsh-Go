@@ -19055,6 +19055,133 @@ class L10nEn extends L10n {
   String get searchKwRemoteCompactHistory => 'compact slim lite history tools transfer bandwidth remote';
 
   @override
+  String get remoteControlTitle => 'Remote control';
+
+  @override
+  String get remoteControlSubtitle => 'Connect external agents through an SSH tunnel';
+
+  @override
+  String get rcCopied => 'Copied';
+
+  @override
+  String get rcConnected => 'Connected';
+
+  @override
+  String get rcConnecting => 'Connecting';
+
+  @override
+  String get rcReconnecting => 'Reconnecting';
+
+  @override
+  String get rcConnectionError => 'Connection failed';
+
+  @override
+  String get rcLoading => 'Loading remote control status';
+
+  @override
+  String get rcStopped => 'Stopped';
+
+  @override
+  String get rcConnection => 'Connection';
+
+  @override
+  String get rcUnavailable => 'Remote control is unavailable in this build';
+
+  @override
+  String get rcInvalidConfig =>
+      'Enter the server, username, valid ports, trusted fingerprint and a private key (a saved key can be reused).';
+
+  @override
+  String rcError(String code) {
+    return 'Remote control failed ($code)';
+  }
+
+  @override
+  String rcActivity(String tool) {
+    return 'Running $tool';
+  }
+
+  @override
+  String get rcStop => 'Stop remote control';
+
+  @override
+  String get rcStart => 'Start remote control';
+
+  @override
+  String get rcApproveFingerprint => 'SSH host SHA256 fingerprint';
+
+  @override
+  String get rcCopyUrl => 'Copy the server-side MCP URL';
+
+  @override
+  String get rcRotateToken => 'Rotate MCP token';
+
+  @override
+  String get rcPermission => 'MCP phone control permission';
+
+  @override
+  String get rcBlocked => 'Blocked';
+
+  @override
+  String get rcConfirm => 'Use existing approval rules';
+
+  @override
+  String get rcTimed => 'Allow temporarily (5 minutes)';
+
+  @override
+  String get rcSshConfig => 'SSH configuration';
+
+  @override
+  String get rcHost => 'Server address';
+
+  @override
+  String get rcSshPort => 'SSH port';
+
+  @override
+  String get rcUsername => 'SSH username';
+
+  @override
+  String get rcRemotePort => 'Server loopback port';
+
+  @override
+  String get rcPrivateKey => 'Copy the complete SSH private key first';
+
+  @override
+  String get rcKeySaved => 'A key is saved';
+
+  @override
+  String get rcAutoStart => 'Start remote control on app launch';
+
+  @override
+  String get rcSave => 'Save SSH configuration';
+
+  @override
+  String get rcVerifyFingerprint =>
+      'Enter the server fingerprint from a trusted source. Unverified hosts are not accepted.';
+
+  @override
+  String get rcCancel => 'Cancel';
+
+  @override
+  String get rcCreateToken => 'Create and copy MCP token';
+
+  @override
+  String get rcRotateTokenHint =>
+      'The old token stops working immediately. The new token will be copied to the clipboard.';
+
+  @override
+  String get rcPassphrase => 'SSH private key passphrase (if needed)';
+
+  @override
+  String get rcAllowExec => 'Allow prompt delegation to DSH';
+
+  @override
+  String get rcPasteKey => 'Paste SSH private key from clipboard';
+
+  @override
+  String get rcKeyStaged => 'Key pasted; save configuration to apply';
+
+  @override
   String get remotePairEntry => 'Pair a computer by scanning';
 
   @override

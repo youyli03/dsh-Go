@@ -78,12 +78,13 @@ class PhoneTaskSessions(
     class Admission internal constructor(internal val task: Task?, internal val epoch: Long, internal val refusal: String? = null,
         internal val scopeEpoch: Long? = task?.tasks?.admissionEpoch(), internal val startedAt: Long) {
         @Volatile internal var expired = false
+        internal var authorization: (() -> Boolean)? = null
         internal var runner: Thread? = null // Protected by this Admission, including interrupt and detach.
     }
 
     internal fun deadlineMs(a: Admission): Long = a.startedAt + PhoneCore.MAX_TOTAL_MS
 
-    internal fun remainingMs(a: Admission): Long = if (a.expired) 0L else
+    internal fun remainingMs(a: Admission): Long = if (a.expired || a.authorization?.invoke() == false) 0L else
         (PhoneCore.MAX_TOTAL_MS - (clock() - a.startedAt).coerceAtLeast(0)).coerceAtLeast(0)
 
     internal fun expire(a: Admission): ToolOutput {

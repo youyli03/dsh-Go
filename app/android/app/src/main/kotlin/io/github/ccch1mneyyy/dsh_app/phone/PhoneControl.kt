@@ -226,6 +226,30 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
         }
     })
 
+    private val externalSessions = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** An authenticated external caller uses the same task registry and native prompts as DSH. */
+    internal fun externalCall(caller: PhoneCaller, name: String, args: Map<String, Any?>,
+        allowed: () -> Boolean, registerCancellation: (() -> Unit) -> Unit): ToolOutput {
+        if (!allowed()) return ToolOutput("Remote phone permission is not active", isError = true)
+        if (name == DiagnosticsTool.NAME) {
+            return RuntimeController.get(app).diagnosticsTool.call(args, caller)
+        }
+        externalSessions.add(caller.sessionId)
+        val admission = sessions.admit(caller)
+        admission.authorization = allowed
+        registerCancellation { sessions.expire(admission) }
+        if (!allowed()) sessions.expire(admission)
+        return sessions.run(admission, name, args)
+    }
+
+    internal fun externalEnd(caller: PhoneCaller) {
+        if (!externalSessions.remove(caller.sessionId)) return
+        val task = sessions.admitEnd(caller.sessionId, caller.runId) ?: return
+        background.sealTask(task.tasks.snapshot().id)
+        sessions.settleEnd(task)
+    }
+
     /** Private prepared invocation only; status/cancel/duplicates never take a Task admission. */
     private fun replayWork(call: McpServer.Dispatch.Call): PhoneCallWork {
         fun reply(value: Map<String, Any?>) = PhoneCallWork({ call.run { _, _, _ ->
@@ -287,6 +311,8 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
         val observations = PhoneTaskObservations(task)
         val env = object : PhoneEnv by this@PhoneControl {
             override fun gate(): UserGate = gate
+            override fun allowOrdinaryFirstWrite(): Boolean = sessionId != null && sessionId in externalSessions &&
+                io.github.ccch1mneyyy.dsh_app.remote.RemoteControlState.policy(app).mode() == "timed"
             override fun onTaskStarted(owner: PhoneTasks.Owner) {} // Registry owns managed trace start.
             override fun driver(screen: PhoneScreen, owner: PhoneTasks.Owner): PhoneDriver? =
                 driverForTask(screen, task, owner)?.let { observations.bind(it, owner) }

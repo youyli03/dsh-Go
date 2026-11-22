@@ -193,6 +193,7 @@ class SafetyGate(
     private val gate: () -> UserGate?,
     private val ownPackage: String = SafetyRules.OWN_PACKAGE,
     private val uiText: PhoneUiText = PhoneUiText.DEFAULT,
+    private val allowOrdinaryFirstWrite: () -> Boolean = { false },
 ) {
     sealed interface Verdict {
         object Allow : Verdict
@@ -287,6 +288,7 @@ class SafetyGate(
             else -> return Verdict.Allow
         }
         // A task/global waiver also answers coordinate questions; App grants stay scoped.
+        if (reason == "first-in-app" && !secret && allowOrdinaryFirstWrite()) return Verdict.Allow
         if (waived(p) || (!forceOnce && roundGranted(p, pkg, reason))) return Verdict.Allow
         val actionApp = appLabel ?: pkg ?: uiText.get("phone_current_app", "当前应用") // l10n:keep test default
         val action = describe(kind, target, actionApp, if (secret) SafetyRules.MASK else typed, submit, point, coordinate) +

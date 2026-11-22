@@ -18073,6 +18073,130 @@ class L10nZh extends L10n {
   String get searchKwRemoteCompactHistory => '精简 简洁 历史 工具 传输 流量 远程 compact slim lite';
 
   @override
+  String get remoteControlTitle => '远控';
+
+  @override
+  String get remoteControlSubtitle => '通过 SSH 隧道连接外部智能体';
+
+  @override
+  String get rcCopied => '已复制';
+
+  @override
+  String get rcConnected => '已连接';
+
+  @override
+  String get rcConnecting => '连接中';
+
+  @override
+  String get rcReconnecting => '重新连接中';
+
+  @override
+  String get rcConnectionError => '连接失败';
+
+  @override
+  String get rcLoading => '正在读取远控状态';
+
+  @override
+  String get rcStopped => '未启动';
+
+  @override
+  String get rcConnection => '连接';
+
+  @override
+  String get rcUnavailable => '此版本不支持远控';
+
+  @override
+  String get rcInvalidConfig => '请填写服务器、用户名、有效端口、可信指纹和私钥（已保存的私钥可沿用）。';
+
+  @override
+  String rcError(String code) {
+    return '远控失败（$code）';
+  }
+
+  @override
+  String rcActivity(String tool) {
+    return '正在调用 $tool';
+  }
+
+  @override
+  String get rcStop => '停止远控';
+
+  @override
+  String get rcStart => '启动远控';
+
+  @override
+  String get rcApproveFingerprint => 'SSH 主机 SHA256 指纹';
+
+  @override
+  String get rcCopyUrl => '复制服务器上的 MCP 地址';
+
+  @override
+  String get rcRotateToken => '更新 MCP 令牌';
+
+  @override
+  String get rcPermission => 'MCP 手机操控权限';
+
+  @override
+  String get rcBlocked => '禁止';
+
+  @override
+  String get rcConfirm => '按现有规则确认';
+
+  @override
+  String get rcTimed => '限时允许（5 分钟）';
+
+  @override
+  String get rcSshConfig => 'SSH 配置';
+
+  @override
+  String get rcHost => '服务器地址';
+
+  @override
+  String get rcSshPort => 'SSH 端口';
+
+  @override
+  String get rcUsername => 'SSH 用户名';
+
+  @override
+  String get rcRemotePort => '服务器回环端口';
+
+  @override
+  String get rcPrivateKey => '请先复制完整的 SSH 私钥';
+
+  @override
+  String get rcKeySaved => '已有保存的密钥';
+
+  @override
+  String get rcAutoStart => '打开 App 时启动远控';
+
+  @override
+  String get rcSave => '保存 SSH 配置';
+
+  @override
+  String get rcVerifyFingerprint => '从可信来源取得服务器指纹并输入。不接受未验证的主机。';
+
+  @override
+  String get rcCancel => '取消';
+
+  @override
+  String get rcCreateToken => '创建并复制 MCP 令牌';
+
+  @override
+  String get rcRotateTokenHint => '更新后旧令牌立即失效。新令牌会复制到剪贴板。';
+
+  @override
+  String get rcPassphrase => 'SSH 私钥口令（如有）';
+
+  @override
+  String get rcAllowExec => '允许委托 DSH 执行提示词';
+
+  @override
+  String get rcPasteKey => '从剪贴板粘贴 SSH 私钥';
+
+  @override
+  String get rcKeyStaged => '已粘贴，保存配置后生效';
+
+  @override
   String get remotePairEntry => '扫码配对电脑';
 
   @override

@@ -10849,6 +10849,60 @@
   "remoteErrHistoryModeChanged": "主机已不支持精简历史，请切换到其他主机后再连回来，或重启 App，重新加载历史",
   "remoteCompactHistoryHint": "支持的 DSH Remote 主机会精简历史工具详情，实时回复和审批不变。切换主机或重启 App 后生效；旧主机仍传输完整历史。",
   "searchKwRemoteCompactHistory": "精简 简洁 历史 工具 传输 流量 远程 compact slim lite",
+  "remoteControlTitle": "远控",
+  "remoteControlSubtitle": "通过 SSH 隧道连接外部智能体",
+  "rcCopied": "已复制",
+  "rcConnected": "已连接",
+  "rcConnecting": "连接中",
+  "rcReconnecting": "重新连接中",
+  "rcConnectionError": "连接失败",
+  "rcLoading": "正在读取远控状态",
+  "rcStopped": "未启动",
+  "rcConnection": "连接",
+  "rcUnavailable": "此版本不支持远控",
+  "rcInvalidConfig": "请填写服务器、用户名、有效端口、可信指纹和私钥（已保存的私钥可沿用）。",
+  "rcError": "远控失败（{code}）",
+  "@rcError": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "rcActivity": "正在调用 {tool}",
+  "@rcActivity": {
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "rcStop": "停止远控",
+  "rcStart": "启动远控",
+  "rcApproveFingerprint": "SSH 主机 SHA256 指纹",
+  "rcCopyUrl": "复制服务器上的 MCP 地址",
+  "rcRotateToken": "更新 MCP 令牌",
+  "rcPermission": "MCP 手机操控权限",
+  "rcBlocked": "禁止",
+  "rcConfirm": "按现有规则确认",
+  "rcTimed": "限时允许（5 分钟）",
+  "rcSshConfig": "SSH 配置",
+  "rcHost": "服务器地址",
+  "rcSshPort": "SSH 端口",
+  "rcUsername": "SSH 用户名",
+  "rcRemotePort": "服务器回环端口",
+  "rcPrivateKey": "请先复制完整的 SSH 私钥",
+  "rcKeySaved": "已有保存的密钥",
+  "rcAutoStart": "打开 App 时启动远控",
+  "rcSave": "保存 SSH 配置",
+  "rcVerifyFingerprint": "从可信来源取得服务器指纹并输入。不接受未验证的主机。",
+  "rcCancel": "取消",
+  "rcCreateToken": "创建并复制 MCP 令牌",
+  "rcRotateTokenHint": "更新后旧令牌立即失效。新令牌会复制到剪贴板。",
+  "rcPassphrase": "SSH 私钥口令（如有）",
+  "rcAllowExec": "允许委托 DSH 执行提示词",
+  "rcPasteKey": "从剪贴板粘贴 SSH 私钥",
+  "rcKeyStaged": "已粘贴，保存配置后生效",
   "remotePairEntry": "扫码配对电脑",
   "remotePairEntryHint": "扫电脑上 Remote 插件显示的二维码，不用注册 Remote 账号（需要先登录 DeepSeek）",
   "remotePairAddComputer": "扫码添加电脑",

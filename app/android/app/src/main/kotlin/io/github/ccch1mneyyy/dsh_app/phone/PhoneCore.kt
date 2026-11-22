@@ -14,6 +14,7 @@ interface PhoneEnv {
     /** The master switch. */
     fun enabled(): Boolean
     fun policies(): PhonePolicies
+    fun allowOrdinaryFirstWrite(): Boolean = false
     fun isLocked(): Boolean
     fun gate(): UserGate?
     fun driver(screen: PhoneScreen): PhoneDriver?
@@ -55,7 +56,8 @@ class PhoneCore(
     },
 ) {
     private val ui: PhoneUiText get() = env.uiText()
-    val safety = SafetyGate(env::policies, tasks, env::gate, uiText = env.uiText())
+    val safety = SafetyGate(env::policies, tasks, env::gate, uiText = env.uiText(),
+        allowOrdinaryFirstWrite = env::allowOrdinaryFirstWrite)
 
     // An abandoned body may overlap a later execution of the same Owner. Keep its display
     // serial with that body, not a mutable Core-wide field or a fresh lookup when say runs.

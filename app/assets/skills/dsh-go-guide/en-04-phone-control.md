@@ -2,6 +2,19 @@
 
 Let DSH read the screen, tap and type to get things done on your phone. Pause or stop it anytime. Phone control works only with this phone's engine and isn't loaded in Safe mode.
 
+## Remote control
+
+Remote control lets an Agent on your computer (Claude Code, Codex and the like) use this phone's phone tools directly over MCP, and also hand one prompt to the local DSH. It does not go through a DSH conversation, and it never answers a dangerous step for you.
+
+1. Have an SSH server you can sign in to. On the Remote control page, fill in the server, user, SSH port and remote port, and paste the private key; before the first connection, copy the SHA256 host fingerprint from a trusted server console and enter it.
+2. Tap Start. The App opens an MCP endpoint on the phone's loopback address and forwards it over SSH to `127.0.0.1:<remote port>` on the server, so only SSH is exposed publicly.
+3. Create a token first. In the MCP client on the server, use `http://127.0.0.1:<remote port>/mcp` with `Authorization: Bearer <token>`. Keep the token in the server configuration, never in a URL, repository or shared configuration.
+4. Under access, choose Blocked, Confirm as usual or Timed allow. Timed allow lasts five minutes and only skips the first-app confirmation for ordinary actions; passwords, payments, system pages and the do-not-touch list still ask.
+
+Use `GatewayPorts no` on the server and confirm the listener is loopback only. The connection survives switching modes, going home or locking, kept by the foreground notification, whose Stop ends it. While locked the tunnel stays up but phone tools are refused, queued actions are cancelled, and a new call is needed after unlocking. Stopping remote control or rotating the token revokes in-flight grants.
+
+With dsh_exec enabled, an external Agent may send one prompt: the phone starts a new conversation, runs one turn and returns the final text and conversation id. It uses the model only, calls no tools and starts no subagent.
+
 ## iPhone / iOS
 
 <!-- nav: commonSettings,hubSettingsPhoneControl -->

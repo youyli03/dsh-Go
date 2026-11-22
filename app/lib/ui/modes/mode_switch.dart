@@ -16,6 +16,7 @@ import '../common/app_sheet.dart';
 import '../common/sheet_title_bar.dart';
 import '../companion/companion_page.dart';
 import '../settings/settings_widgets.dart';
+import '../remote_control/remote_control_page.dart';
 import '../shell/page_frame.dart';
 import '../tavern/tavern_home_page.dart';
 import '../fx/waves/distortion_wave.dart';
@@ -25,6 +26,7 @@ import '../theme/theme.dart';
 /// The page of a mode other than 工作.
 Widget appModePage(AppMode mode) => switch (mode) {
   AppMode.companion => const CompanionPage(),
+  AppMode.remoteControl => const RemoteControlPage(actions: [ModeKey(current: AppMode.remoteControl)]),
   AppMode.tavern => const TavernHomePage(),
   AppMode.work => throw ArgumentError.value(mode, 'mode', '工作 is the home, not a page'),
 };
@@ -61,12 +63,14 @@ String appModeLabel(L10n l10n, AppMode mode) => switch (mode) {
   AppMode.work => l10n.modeWork,
   AppMode.companion => l10n.companionTitle,
   AppMode.tavern => l10n.tavernTitle,
+  AppMode.remoteControl => l10n.remoteControlTitle,
 };
 
 IconData appModeIcon(AppMode mode) => switch (mode) {
   AppMode.work => AppIcons.chat,
   AppMode.companion => AppIcons.pet,
   AppMode.tavern => AppIcons.tavern,
+  AppMode.remoteControl => Icons.settings_remote_outlined,
 };
 
 /// 模式: the three modes, [current] marked, and which one a launch opens in.
@@ -87,10 +91,12 @@ class ModeSheet extends ConsumerWidget {
     final l10n = context.l10n;
     final scheme = Theme.of(context).colorScheme;
     final startup = ref.watch(appModeProvider.select((s) => s.startup));
+    final modes = ref.watch(availableAppModesProvider);
     String subtitle(AppMode mode) => switch (mode) {
       AppMode.work => l10n.modeWorkSubtitle,
       AppMode.companion => l10n.companionEntrySubtitle,
       AppMode.tavern => l10n.modeTavernSubtitle,
+      AppMode.remoteControl => l10n.remoteControlSubtitle,
     };
     return SafeArea(
       top: false,
@@ -102,7 +108,7 @@ class ModeSheet extends ConsumerWidget {
           SheetGroup(
             margin: const EdgeInsets.fromLTRB(SheetTitleBar.inset, 0, SheetTitleBar.inset, 12),
             children: [
-              for (final mode in AppMode.values)
+              for (final mode in modes)
                 Semantics(
                   key: ValueKey('mode-row-${mode.name}'),
                   selected: mode == current,
@@ -127,7 +133,7 @@ class ModeSheet extends ConsumerWidget {
                 key: const ValueKey('mode-startup'),
                 title: l10n.modeStartup,
                 tinted: false,
-                segments: [for (final mode in AppMode.values) PillSegment(mode, appModeShortLabel(l10n, mode))],
+                segments: [for (final mode in modes) PillSegment(mode, appModeShortLabel(l10n, mode))],
                 selected: startup,
                 onChanged: (mode) => unawaited(ref.read(appModeProvider.notifier).setStartup(mode)),
               ),
@@ -145,6 +151,7 @@ String appModeShortLabel(L10n l10n, AppMode mode) => switch (mode) {
   AppMode.work => l10n.modeWork,
   AppMode.companion => l10n.modeCompanionShort,
   AppMode.tavern => l10n.tavernTitle,
+  AppMode.remoteControl => l10n.remoteControlTitle,
 };
 
 /// The drawer's key to 模式, beside 网页模式.

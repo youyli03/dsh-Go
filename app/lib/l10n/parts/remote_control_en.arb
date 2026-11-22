@@ -1,0 +1,56 @@
+{
+  "remoteControlTitle": "Remote control",
+  "remoteControlSubtitle": "Connect external agents through an SSH tunnel",
+  "rcCopied": "Copied",
+  "rcConnected": "Connected",
+  "rcConnecting": "Connecting",
+  "rcReconnecting": "Reconnecting",
+  "rcConnectionError": "Connection failed",
+  "rcLoading": "Loading remote control status",
+  "rcStopped": "Stopped",
+  "rcConnection": "Connection",
+  "rcUnavailable": "Remote control is unavailable in this build",
+  "rcInvalidConfig": "Enter the server, username, valid ports, trusted fingerprint and a private key (a saved key can be reused).",
+  "rcError": "Remote control failed ({code})",
+  "@rcError": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "rcActivity": "Running {tool}",
+  "@rcActivity": {
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "rcStop": "Stop remote control",
+  "rcStart": "Start remote control",
+  "rcApproveFingerprint": "SSH host SHA256 fingerprint",
+  "rcCopyUrl": "Copy the server-side MCP URL",
+  "rcRotateToken": "Rotate MCP token",
+  "rcPermission": "MCP phone control permission",
+  "rcBlocked": "Blocked",
+  "rcConfirm": "Use existing approval rules",
+  "rcTimed": "Allow temporarily (5 minutes)",
+  "rcSshConfig": "SSH configuration",
+  "rcHost": "Server address",
+  "rcSshPort": "SSH port",
+  "rcUsername": "SSH username",
+  "rcRemotePort": "Server loopback port",
+  "rcPrivateKey": "Copy the complete SSH private key first",
+  "rcKeySaved": "A key is saved",
+  "rcAutoStart": "Start remote control on app launch",
+  "rcSave": "Save SSH configuration",
+  "rcVerifyFingerprint": "Enter the server fingerprint from a trusted source. Unverified hosts are not accepted.",
+  "rcCancel": "Cancel",
+  "rcCreateToken": "Create and copy MCP token",
+  "rcRotateTokenHint": "The old token stops working immediately. The new token will be copied to the clipboard.",
+  "rcPassphrase": "SSH private key passphrase (if needed)",
+  "rcAllowExec": "Allow prompt delegation to DSH",
+  "rcPasteKey": "Paste SSH private key from clipboard",
+  "rcKeyStaged": "Key pasted; save configuration to apply"
+}

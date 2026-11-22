@@ -10,7 +10,9 @@ import 'companion/companion_initiative_owner.dart' show companionInitiativeProvi
 import 'l10n/l10n.dart';
 import 'performance/performance_state.dart';
 import 'performance/refresh_rate.dart';
+import 'state/android_features.dart';
 import 'state/app_info.dart';
+import 'state/remote_control_channel.dart';
 import 'state/appearance_state.dart';
 import 'state/locale_state.dart';
 import 'state/star_prompt.dart' show starPromptGateProvider, starPromptProvider;
@@ -69,6 +71,9 @@ class _DshAppState extends ConsumerState<DshApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    if (ref.read(operatingSystemProvider) == 'android') {
+      unawaited(RemoteControlChannel.autoStart());
+    }
     // Start loading the stored tile style now, so 全部功能 opens in it rather
     // than flashing the default first.
     ref.read(tileStyleProvider);

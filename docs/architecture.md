@@ -446,6 +446,7 @@ DSH npm 前缀（runtime/locks）→ rtbuild 按 series 应用目标平台的补
 | 引擎补丁/升级 | §5.4/§5.5、`docs/maintenance/*-contract.md` | `runtime/patches/**`、`runtime/build-runtime.sh` | `python3 -I runtime/tests/test_patch_dsh.py`（构建需 x86_64 主机） |
 | 本机引擎生命周期 | `docs/design/runtime-cold-start.md` | Kotlin `runtime/`、`state/engine_control.dart` | 真机 + `(cd app/android && gradle :app:testArm64DebugUnitTest)` |
 | 手机操控 | `docs/design/phone-*.md` | Kotlin `phone/`、`state/phone_state.dart` | 真机 |
+| 远控（外部 Agent 经 MCP 用手机） | `docs/design/remote-control.md` | Kotlin `remote/`、`ui/remote_control/`、`state/remote_control_channel.dart` | 真机 + 定向 Kotlin 编译 |
 | iOS 引擎 / guest | §3.6、`app/ios/README.md` | `EngineChannel.swift`、`runtime/ios/`、`tooling/ios/prepare-engine.sh` | iOS compile/guest CI + 真机启动 |
 | iOS 手机操控 | §3.6、`tooling/ios/phone-self-runner/README.md` | `IOSPhoneRunner.swift`、`IOSPhoneCoreDevice.swift`、`PhoneRunner/` | CoreDevice 服务探测、真机截图/输入/返回，逐项核对 |
 | iOS 小组件 / 语音 / PiP | §3.6、`tooling/ios/CHANNEL_COVERAGE.md` | `CompanionWidget/`、`VoiceChannel.swift`、`PetOverlay/` | 对应原生/Flutter 测试 + 真机行为 |

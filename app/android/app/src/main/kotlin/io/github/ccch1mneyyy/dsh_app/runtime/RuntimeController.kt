@@ -408,6 +408,18 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         internal val root: File,
     )
 
+    private var remoteExecProof: String? = null
+    internal class RemoteExecOrigin(val base: String, val proof: String, val bearer: String, val generation: Int)
+
+    @Synchronized internal fun remoteExecOrigin(): RemoteExecOrigin? {
+        if (phase != Phase.RUNNING || runSafe || resetting || stopGen >= runGen) return null
+        return RemoteExecOrigin(baseUrl ?: return null, remoteExecProof ?: return null, token ?: return null, runGen)
+    }
+
+    @Synchronized internal fun remoteExecCurrent(origin: RemoteExecOrigin): Boolean =
+        phase == Phase.RUNNING && !runSafe && !resetting && stopGen < runGen &&
+            runGen == origin.generation && baseUrl == origin.base && remoteExecProof == origin.proof
+
     @Synchronized internal fun capturePhoneSkillOrigin(): PhoneSkillOrigin? =
         if (phase == Phase.RUNNING && !runSafe && !resetting && stopGen < runGen &&
             phoneSkillStoppedGeneration < runGen) PhoneSkillOrigin(this, runGen, installer.rootfs) else null
@@ -584,6 +596,10 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 val env = LinkedHashMap<String, String>()
                 env["TZ"] = java.util.TimeZone.getDefault().id
                 env.putAll(pendingEnv)
+                env.remove("DSH_GO_EXEC_PROOF")
+                val execProof = if (safe) null else ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+                    .joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it.toInt() and 0xff) }
+                if (execProof != null) env["DSH_GO_EXEC_PROOF"] = execProof
                 workspaceRecovery.applyEnvironment(env)
                 PerformancePolicy.applyEngineEnvironment(app, env, manifest.launchArgv, manifest.launchEnv)
                 if (safe) {
@@ -634,6 +650,7 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                     ).also {
                         launched = it
                         lastLaunch = it.launchDiagnostics
+                        remoteExecProof = execProof
                         process = it
                     }
                 } ?: run {

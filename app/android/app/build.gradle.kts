@@ -180,6 +180,10 @@ configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configu
 }
 
 dependencies {
+    // BSD-3-Clause: Android-native SSH reverse forwarding (no shell process).
+    implementation("com.github.mwiede:jsch:0.2.26")
+    // BSD-3-Clause: loopback MCP HTTP framing.
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     // MIT. 1.27.0 exactly: sherpa-onnx 1.13.4 (pubspec.yaml) links ORT 1.27.0's symbols.
     // 1.23.2 crashed on Snapdragon 8 Elite with Android 16 (SME, onnxruntime#27884).
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")

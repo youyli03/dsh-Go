@@ -37,6 +37,7 @@ import java.util.TimeZone
 
 class MainActivity : FlutterActivity() {
     private var appChannel: MethodChannel? = null
+    private var remoteControlChannel: MethodChannel? = null
 
     /** The selection toolbar's text actions, asked of the engine once (see [CachedTextActions]). */
     private var textActions: CachedTextActions? = null
@@ -215,6 +216,9 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         textActions = CachedTextActions.install(flutterEngine)
+        remoteControlChannel = io.github.ccch1mneyyy.dsh_app.remote.RemoteControlChannel.install(
+            this, flutterEngine.dartExecutor.binaryMessenger,
+        )
         appChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dsh/app")
         appChannel!!.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -257,6 +261,8 @@ class MainActivity : FlutterActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         appChannel?.setMethodCallHandler(null)
         appChannel = null
+        remoteControlChannel?.setMethodCallHandler(null)
+        remoteControlChannel = null
         textActions = null
         super.cleanUpFlutterEngine(flutterEngine)
     }

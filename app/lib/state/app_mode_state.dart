@@ -12,7 +12,14 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum AppMode { work, companion, tavern }
+import 'android_features.dart';
+
+enum AppMode { work, companion, tavern, remoteControl }
+
+final availableAppModesProvider = Provider<List<AppMode>>((ref) => [
+  for (final mode in AppMode.values)
+    if (mode != AppMode.remoteControl || ref.watch(operatingSystemProvider) == 'android') mode,
+]);
 
 class AppModeState {
   const AppModeState({this.startup = AppMode.work, this.loaded = false});
@@ -40,10 +47,12 @@ class AppModeController extends Notifier<AppModeState> {
       // No preferences backend (tests) or an unreadable store: 工作.
     }
     // A choice made while reading back wins over the stored value.
+    if (!ref.read(availableAppModesProvider).contains(startup)) startup = AppMode.work;
     if (!state.loaded) state = AppModeState(startup: startup, loaded: true);
   }
 
   Future<void> setStartup(AppMode mode) async {
+    if (!ref.read(availableAppModesProvider).contains(mode)) return;
     state = AppModeState(startup: mode, loaded: true);
     try {
       final prefs = await SharedPreferences.getInstance();
