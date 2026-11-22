@@ -1,7 +1,7 @@
-# Builds an installable debug APK with the bundled arm64 runtime, so a change can
+﻿# Builds an installable debug APK with the bundled arm64 runtime, so a change can
 # be tried on a real phone without a local Android toolchain:
 #
-#   Actions › Test APK › Run workflow   (or push a change to this file)
+#   Actions 鈥?Test APK 鈥?Run workflow   (or push a change to this file)
 #   then download the `dsh-go-debug-apk` artifact of that run.
 #
 # Not part of `CI OK`: this is a delivery build, not a check.
@@ -28,7 +28,7 @@ env:
 
 jobs:
   apk:
-    name: Debug APK (arm64)
+    name: Test APK (arm64)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -72,12 +72,12 @@ jobs:
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Build the test APK
-        # A side build installs next to the released app as 测试 / DSH Go 测试, with
+        # A side build installs next to the released app as 娴嬭瘯 / DSH Go 娴嬭瘯, with
         # its own data, so no uninstall is needed when the signatures differ.
         run: tooling/build-apk.sh --release --side -f arm64 --no-companion
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dsh-go-debug-apk
+          name: dsh-go-test-apk
           path: app/build/app/outputs/flutter-apk/*.apk
           retention-days: 14
           if-no-files-found: error
