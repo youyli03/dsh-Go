@@ -1,9 +1,11 @@
-﻿# Builds an installable debug APK with the bundled arm64 runtime, so a change can
+# Builds an installable test APK with the bundled arm64 runtime, so a change can
 # be tried on a real phone without a local Android toolchain:
 #
-#   Actions 鈥?Test APK 鈥?Run workflow   (or push a change to this file)
-#   then download the `dsh-go-debug-apk` artifact of that run.
+#   Actions > Test APK > Run workflow   (or push a change to this file)
+#   then download the `dsh-go-test-apk` artifact of that run.
 #
+# The package is a side build (`--side` + `--no-companion`): it installs next to
+# the released app as its own package, so no uninstall is needed.
 # Not part of `CI OK`: this is a delivery build, not a check.
 name: Test APK
 
@@ -58,6 +60,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # libtawcroot.so is a release-build input compiled from this exact NDK
+      # (runtime/tawcroot/source.json); the runner image ships no NDK at all.
+      - name: Install the pinned Android NDK
+        run: |
+          sdkmanager="$(command -v sdkmanager || true)"
+          if [ -z "$sdkmanager" ]; then
+            sdkmanager="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -name sdkmanager -type f | sort | head -n 1)"
+          fi
+          [ -n "$sdkmanager" ] || { echo "no sdkmanager found" >&2; exit 1; }
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -72,8 +86,6 @@ jobs:
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Build the test APK
-        # A side build installs next to the released app as 娴嬭瘯 / DSH Go 娴嬭瘯, with
-        # its own data, so no uninstall is needed when the signatures differ.
         run: tooling/build-apk.sh --release --side -f arm64 --no-companion
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
