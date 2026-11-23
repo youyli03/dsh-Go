@@ -4,8 +4,9 @@
 #   Actions > Test APK > Run workflow   (or push a change to this file)
 #   then download the `dsh-go-test-apk` artifact of that run.
 #
-# The package is a side build (`--side` + `--no-companion`): it installs next to
-# the released app as its own package, so no uninstall is needed.
+# Uses the official package name and the fork owner's fixed signing key.
+# Uninstall an official-signed installation before switching to this fork.
+# Later fork builds signed with the same key can update it in place.
 # Not part of `CI OK`: this is a delivery build, not a check.
 name: Test APK
 
@@ -15,6 +16,10 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/test-apk.yml'
+      - 'app/**'
+      - 'packages/**'
+      - 'runtime/**'
+      - 'tooling/**'
 
 permissions:
   contents: read
@@ -37,6 +42,37 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Prepare the fixed fork signing key
+        env:
+          FORK_ANDROID_KEYSTORE_BASE64: ${{ secrets.FORK_ANDROID_KEYSTORE_BASE64 }}
+          FORK_ANDROID_STORE_PASSWORD: ${{ secrets.FORK_ANDROID_STORE_PASSWORD }}
+          FORK_ANDROID_KEY_ALIAS: ${{ secrets.FORK_ANDROID_KEY_ALIAS }}
+          FORK_ANDROID_KEY_PASSWORD: ${{ secrets.FORK_ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          names = ('KEYSTORE_BASE64', 'STORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD')
+          missing = [name for name in names if not os.environ.get('FORK_ANDROID_' + name)]
+          if missing:
+              raise SystemExit('Missing signing secrets: ' + ', '.join(missing))
+          key = Path(os.environ['RUNNER_TEMP']) / 'dsh-go-fork.jks'
+          key.write_bytes(base64.b64decode(os.environ['FORK_ANDROID_KEYSTORE_BASE64'], validate=True))
+          key.chmod(0o600)
+          def escape(value):
+              return value.replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace(' ', '\\ ')
+          properties = {
+              'storeFile': key.as_posix(),
+              'storePassword': os.environ['FORK_ANDROID_STORE_PASSWORD'],
+              'keyAlias': os.environ['FORK_ANDROID_KEY_ALIAS'],
+              'keyPassword': os.environ['FORK_ANDROID_KEY_PASSWORD'],
+          }
+          config = Path('app/android/key.properties')
+          config.write_text(''.join(name + '=' + escape(value) + '\n' for name, value in properties.items()), encoding='ascii')
+          config.chmod(0o600)
+          PY
       # Same runtime the release path bundles; the download cache is verified by
       # hash on every run, so a stale entry is harmless.
       - name: Restore the runtime download cache
@@ -86,10 +122,29 @@ jobs:
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Build the test APK
-        run: tooling/build-apk.sh --release --side -f arm64 --no-companion
+        run: tooling/build-apk.sh --release -f arm64 --no-companion --no-star
+      - name: Verify the APK signing certificate
+        env:
+          FORK_ANDROID_STORE_PASSWORD: ${{ secrets.FORK_ANDROID_STORE_PASSWORD }}
+          FORK_ANDROID_KEY_ALIAS: ${{ secrets.FORK_ANDROID_KEY_ALIAS }}
+        run: |
+          keytool -exportcert -keystore "$RUNNER_TEMP/dsh-go-fork.jks" \
+            -storepass:env FORK_ANDROID_STORE_PASSWORD -alias "$FORK_ANDROID_KEY_ALIAS" \
+            -file "$RUNNER_TEMP/dsh-go-fork.der"
+          expected="$(sha256sum "$RUNNER_TEMP/dsh-go-fork.der" | cut -d ' ' -f 1)"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          for apk in app/build/app/outputs/flutter-apk/*.apk; do
+            "$apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/apk-cert.txt"
+            actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-cert.txt")"
+            [ "$actual" = "$expected" ] || { echo 'APK signing certificate mismatch' >&2; exit 1; }
+            echo "Verified fork signing certificate: $actual"
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dsh-go-test-apk
           path: app/build/app/outputs/flutter-apk/*.apk
           retention-days: 14
           if-no-files-found: error
+      - name: Remove signing files from the runner
+        if: always()
+        run: rm -f app/android/key.properties "$RUNNER_TEMP/dsh-go-fork.jks" "$RUNNER_TEMP/dsh-go-fork.der"
