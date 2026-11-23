@@ -135,8 +135,10 @@ jobs:
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
           for apk in app/build/app/outputs/flutter-apk/*.apk; do
             "$apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/apk-cert.txt"
-            actual="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-cert.txt")"
-            [ "$actual" = "$expected" ] || { echo 'APK signing certificate mismatch' >&2; exit 1; }
+            # Build Tools 36 uses "Signer #1"; 37 uses "V3.0 Signer:".
+            # All reported signing certificates must match the fixed fork key.
+            actual="$(sed -nE 's/^(Signer #[0-9]+|V[0-9.]+ Signer:) certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\2/p' "$RUNNER_TEMP/apk-cert.txt" | tr '[:upper:]' '[:lower:]' | sort -u)"
+            [ "$actual" = "$expected" ] || { cat "$RUNNER_TEMP/apk-cert.txt"; echo "APK signing certificate mismatch: expected $expected, got ${actual:-<not found>}" >&2; exit 1; }
             echo "Verified fork signing certificate: $actual"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
