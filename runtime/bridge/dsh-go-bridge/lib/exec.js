@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const PATH = '/dsh-go/v1/exec';
 const HEADER = 'x-dsh-go-exec-proof';
@@ -20,6 +21,94 @@ let launchProof = (() => {
   delete process.env.DSH_GO_EXEC_PROOF;
   return process.platform === 'linux' && HEX.test(proof ?? '') ? digest(proof) : undefined;
 })();
+
+async function runApprovedSession(ctx, record, prompt, userMessage) {
+  const { requestId, sessionId } = record.result;
+  const localStop = record.abort.signal;
+  const signal = AbortSignal.any([localStop, AbortSignal.timeout(5 * 60_000)]);
+  let agent;
+  let cancelFailed = false;
+  const cancel = () => {
+    try { agent.cancel({ kind: 'user' }, { keepInbox: false }); }
+    catch { cancelFailed = true; }
+  };
+  let started = false;
+  try {
+    const sessions = ctx.get('sessions');
+    agent = ctx.get('agents')?.get(sessionId);
+    const session = agent?.session;
+    const scope = agent?.loopCtx ?? agent?.ctx;
+    const permissions = scope?.get('permissionPresets') ?? ctx.get('permissionPresets');
+    const sandbox = scope?.get('sandboxPolicy');
+    const approval = scope?.get('approval');
+    const blank = () => !session.events.some(event =>
+      event.type === 'user/message' || event.type === 'turn/start' || event.type === 'agent/inbox/spliced');
+    const current = () => ctx.get('agents')?.get(sessionId) === agent && agent.session === session;
+    if (typeof agent?.followup !== 'function' || typeof agent.cancel !== 'function' ||
+        typeof sessions?.flush !== 'function' || !Array.isArray(session?.events) ||
+        typeof permissions?.set !== 'function' || typeof sandbox?.resolve !== 'function' ||
+        typeof approval?.effectivePolicy !== 'function' ||
+        !blank())
+      return { status: 'failed', errorCode: 'session-unavailable' };
+    const message = await userMessage({
+      content: [{ type: 'text', text: prompt }],
+      source: { kind: 'user', rpcId: requestId },
+    });
+    signal.throwIfAborted();
+    if (!current() || !blank())
+      return { status: 'failed', errorCode: 'session-unavailable' };
+    const spec = permissions.resolve('workspace-write');
+    if (spec.sandbox !== 'workspace-write' || spec.approval !== 'ask')
+      return { status: 'failed', errorCode: 'session-permission-unavailable' };
+    permissions.set(session, 'workspace-write');
+    if (await sessions.flush(session) !== true)
+      return { status: 'failed', errorCode: 'session-persistence-failed' };
+    signal.throwIfAborted();
+    if (!current() ||
+        sandbox.resolve({ session }).mode !== 'workspace-write' || approval.effectivePolicy(session) !== 'ask' ||
+        !blank())
+      return { status: 'failed', errorCode: 'session-permission-unavailable' };
+    let cursor = session.events.length, turn, ours = false, other = false, text = '';
+    signal.addEventListener('abort', cancel, { once: true });
+    started = true;
+    agent.followup(message);
+    while (current()) {
+      signal.throwIfAborted();
+      const events = session.events;
+      for (; cursor < events.length; cursor++) {
+        const { type, data } = events[cursor];
+        if (type === 'turn/start') turn = data.turn;
+        if (type === 'user/message') {
+          if (data.source?.rpcId === requestId) ours = true;
+          else other = true;
+        }
+        if (type === 'assistant/message' && ours && !other && data.turn === turn) {
+          const reply = data.message?.content?.filter(part => part.type === 'text').map(part => part.text).join('');
+          text = reply && Buffer.byteLength(reply) <= MAX_TEXT ? reply : '';
+        }
+        if (type === 'turn/end' && ours && data.turn === turn) {
+          signal.removeEventListener('abort', cancel);
+          record.finalizing = true;
+          if (await sessions.flush(session) !== true)
+            return { status: 'failed', errorCode: 'session-persistence-failed' };
+          if (data.reason?.kind === 'aborted') return { status: 'cancelled' };
+          return data.reason?.kind === 'completed' && !other
+            ? { status: 'succeeded', text } : { status: 'failed', errorCode: 'session-turn-failed' };
+        }
+        if (type === 'turn/end') { ours = false; other = false; text = ''; }
+      }
+      await delay(150, undefined, { signal });
+    }
+    return { status: 'failed', errorCode: 'session-unavailable' };
+  } catch {
+    if (started && !signal.aborted) cancel();
+    if (cancelFailed) return { status: 'failed', errorCode: 'session-cancel-unconfirmed' };
+    return localStop.aborted ? { status: 'cancelled' } :
+      { status: 'failed', errorCode: signal.aborted ? 'model-timeout' : 'session-exec-failed' };
+  } finally {
+    signal.removeEventListener('abort', cancel);
+  }
+}
 
 function appendTranscript(sessions, session, prompt, selection, result) {
   return (async () => {
@@ -58,7 +147,9 @@ export function takeExecLaunchProof() {
   return proof;
 }
 
-export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
+const createSessionMessage = async spec => (await import('@deepseek-ai/dsh-llm')).createUserMessage(spec);
+
+export function createExecRoutes(ctx, { readBody, send, proofDigest, userMessage = createSessionMessage }) {
   const records = new Map();
   let active, closed = false;
   const respond = (res, status, data) => {
@@ -137,7 +228,10 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
         if (res.destroyed) return true;
         const start = path === PATH;
         if (!body || !UUID.test(typeof body.requestId === 'string' ? body.requestId : '') ||
-            Object.keys(body).some(key => key !== 'requestId' && !(start && key === 'prompt')) ||
+            Object.keys(body).some(key => key !== 'requestId' && !(start && (key === 'prompt' || key === 'sessionId'))) ||
+            start && body.sessionId !== undefined &&
+              (typeof body.sessionId !== 'string' || !body.sessionId.startsWith('dsh-go-exec-') ||
+                !UUID.test(body.sessionId.slice('dsh-go-exec-'.length))) ||
             start && (typeof body.prompt !== 'string' || !body.prompt.trim())) {
           reject(res, 400, 'bad-request');
         } else if (closed) {
@@ -168,6 +262,19 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
           reject(res, 503, active ? 'exec-busy' : 'exec-request-capacity');
         } else {
           try {
+            if (body.sessionId !== undefined) {
+              const record = { abort: new AbortController(),
+                result: { requestId: body.requestId, sessionId: body.sessionId, status: 'running' } };
+              records.set(body.requestId, record);
+              active = record;
+              record.done = runApprovedSession(ctx, record, body.prompt, userMessage).then(result => {
+                Object.assign(record.result, result);
+                record.expiry = setTimeout(() => records.set(body.requestId, null), RESULT_TTL);
+                record.expiry.unref();
+              }).finally(() => { active = undefined; });
+              respond(res, 202, record.result);
+              return true;
+            }
             const sessions = ctx.get('sessions');
             const llm = ctx.get('llm');
             const selection = ctx.get('agentDefaultModel')?.currentSelection();

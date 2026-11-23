@@ -68,5 +68,6 @@ internal object RemoteControlConfig {
         "fingerprint" to c.optString("fingerprint"), "hasPrivateKey" to c.optString("privateKey").isNotEmpty(),
         "hasToken" to c.optString("token").isNotEmpty(), "autoStart" to c.optBoolean("autoStart"),
         "allowExec" to c.optBoolean("allowExec"),
+        "execSession" to c.optBoolean("execSession"),
     )
 }

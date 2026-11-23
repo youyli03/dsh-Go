@@ -46,12 +46,17 @@ function fixture(t, options = {}) {
       },
     },
   };
+  if (options.agent) {
+    services.agents = { get: id => id === options.agent.session.id ? options.agent : undefined };
+    services.sessions.flush = async () => options.flush !== false;
+  }
   const digest = options.enabled === false ? undefined : createHash('sha256').update(proof).digest();
   const routes = createExecRoutes({ get(name) {
     assert.ok(Object.hasOwn(services, name), `unexpected service: ${name}`);
     return services[name];
   } }, {
     proofDigest: digest,
+    userMessage: spec => spec,
     readBody: async req => Buffer.from(JSON.stringify(req.body)),
     send: (res, status, data) => {
       if (typeof res.writeHead === 'function') {
@@ -83,6 +88,68 @@ function fixture(t, options = {}) {
   }
   return { routes, events, inputs, ids, call, waitTerminal, open, loss: () => signal.aborted };
 }
+
+function normalAgent({ approval = 'ask', hold = false } = {}) {
+  const session = { id: `dsh-go-exec-${randomUUID()}`, events: [] };
+  let sandboxMode = 'danger-full-access', approvalPolicy = 'never', submissions = 0, cancellations = 0;
+  const services = {
+    permissionPresets: {
+      resolve: () => ({ sandbox: 'workspace-write', approval }),
+      set() { sandboxMode = 'workspace-write'; approvalPolicy = approval; },
+    },
+    sandboxPolicy: { resolve: () => ({ mode: sandboxMode }) },
+    approval: { effectivePolicy: () => approvalPolicy },
+  };
+  return {
+    session,
+    ctx: { get: name => services[name] },
+    get submissions() { return submissions; },
+    get cancellations() { return cancellations; },
+    followup(message) {
+      assert.equal(sandboxMode, 'workspace-write');
+      assert.equal(approvalPolicy, 'ask');
+      submissions++;
+      session.events.push({ type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: message });
+      if (!hold) session.events.push(
+        { type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'session reply' }] } } },
+        { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+      );
+    },
+    cancel(_reason, options) { assert.equal(options.keepInbox, false); cancellations++; },
+  };
+}
+
+test('session exec submits only after verifying and saving its restricted permissions', async t => {
+  const agent = normalAgent();
+  const f = fixture(t, { agent });
+  const requestId = randomUUID();
+  assert.equal((await f.call('', { requestId, sessionId: agent.session.id, prompt: 'Use tools if needed' })).status, 202);
+  assert.deepEqual(await f.waitTerminal(requestId),
+    { requestId, sessionId: agent.session.id, status: 'succeeded', text: 'session reply' });
+  assert.equal(agent.submissions, 1);
+  assert.equal(f.inputs.length, 0);
+});
+
+test('exec never submits if the negotiated preset auto-approves or permissions could not be saved', async t => {
+  for (const [agent, flush] of [[normalAgent({ approval: 'never' }), true], [normalAgent(), false]]) {
+    const f = fixture(t, { agent, flush });
+    const requestId = randomUUID();
+    await f.call('', { requestId, sessionId: agent.session.id, prompt: 'Do not dispatch' });
+    assert.equal((await f.waitTerminal(requestId)).status, 'failed');
+    assert.equal(agent.submissions, 0);
+  }
+});
+
+test('revoking exec cancels an admitted session turn and removes its queued input', async t => {
+  const agent = normalAgent({ hold: true });
+  const f = fixture(t, { agent });
+  const requestId = randomUUID();
+  await f.call('', { requestId, sessionId: agent.session.id, prompt: 'Await cancellation' });
+  assert.equal(agent.submissions, 1);
+  await f.call('/cancel', { requestId });
+  assert.equal((await f.waitTerminal(requestId)).status, 'cancelled');
+  assert.equal(agent.cancellations, 1);
+});
 
 test('exec requires launch enablement, loopback and distinct proof for every route', async t => {
   const off = fixture(t, { enabled: false });

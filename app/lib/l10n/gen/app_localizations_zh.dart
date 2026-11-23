@@ -18119,6 +18119,15 @@ class L10nZh extends L10n {
   }
 
   @override
+  String get rcApproveNextRound => '允许开启下一轮';
+
+  @override
+  String get rcNextRoundRequest => '远端请求开启新的手机操作轮次。当前轮次会结束，旧操作不会重试。';
+
+  @override
+  String get rcDenyNextRound => '拒绝开启下一轮';
+
+  @override
   String get rcStop => '停止远控';
 
   @override
@@ -18137,13 +18146,10 @@ class L10nZh extends L10n {
   String get rcPermission => 'MCP 手机操控权限';
 
   @override
-  String get rcBlocked => '禁止';
+  String get rcPhoneControlEnabled => '允许远控操作手机';
 
   @override
-  String get rcConfirm => '按现有规则确认';
-
-  @override
-  String get rcTimed => '限时允许（5 分钟）';
+  String get rcPhoneControlHint => '沿用手机操控的确认规则。关闭后停止进行中的远控手机操作。';
 
   @override
   String get rcSshConfig => 'SSH 配置';
@@ -18189,6 +18195,12 @@ class L10nZh extends L10n {
 
   @override
   String get rcAllowExec => '允许委托 DSH 执行提示词';
+
+  @override
+  String get rcExecSession => '允许在 DSH 对话中使用工具';
+
+  @override
+  String get rcExecSessionHint => '每条提示词创建一个新对话。对话可写入工作区，需要额外权限时在手机上确认。保存设置后生效。';
 
   @override
   String get rcPasteKey => '从剪贴板粘贴 SSH 私钥';

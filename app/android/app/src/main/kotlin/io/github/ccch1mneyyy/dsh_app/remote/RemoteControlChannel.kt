@@ -43,6 +43,7 @@ internal object RemoteControlChannel {
                                 }
                                 call.argument<Boolean>("autoStart")?.let { put("autoStart", it) }
                                 call.argument<Boolean>("allowExec")?.let { put("allowExec", it) }
+                                call.argument<Boolean>("execSession")?.let { put("execSession", it) }
                             }
                             result.success(RemoteControlState.status(app))
                         }
@@ -53,8 +54,18 @@ internal object RemoteControlChannel {
                             result.success(RemoteControlState.status(app))
                         }
                         "setPermission" -> {
-                            RemoteControlState.policy(app).setMode(call.argument<String>("permission").orEmpty())
+                            val mode = call.argument<String>("permission")
+                            require(mode == "blocked" || mode == "confirm")
+                            RemoteControlConfig.update(app) { put("phoneControlEnabled", mode == "confirm") }
+                            RemoteControlState.policy(app).setMode(mode)
                             result.success(RemoteControlState.status(app))
+                        }
+                        "decideRound" -> {
+                            val decided = RemoteControlState.decideRound(
+                                call.argument<String>("id").orEmpty(),
+                                call.argument<Boolean>("approved") == true,
+                            )
+                            if (decided) result.success(null) else result.error("next_round_request_expired", null, null)
                         }
                         "rotateToken" -> {
                             val token = RemoteControlConfig.newToken()
@@ -87,7 +98,9 @@ internal object RemoteControlChannel {
         val config = RemoteControlConfig.read(context)
         require(config.optString("host").isNotEmpty() && config.optString("privateKey").isNotEmpty())
         require(config.optString("token").isNotEmpty())
-        val launch = RemoteControlState.prepare(config.getString("token"), config.optBoolean("allowExec"))
+        val launch = RemoteControlState.prepare(
+            config.getString("token"), config.optBoolean("allowExec"), config.optBoolean("execSession"),
+        )
         try {
             context.startForegroundService(Intent(context, RemoteControlService::class.java)
                 .putExtra(RemoteControlService.LAUNCH, launch))

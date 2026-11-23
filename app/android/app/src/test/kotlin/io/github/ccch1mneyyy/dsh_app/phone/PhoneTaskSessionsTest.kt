@@ -174,6 +174,27 @@ class PhoneTaskSessionsTest {
         assertFalse(invoke("A", "2").isError)
     }
 
+    @Test fun remoteIdleEndsTheTaskWithoutEndingTheConnectionOrClearingAnExplicitStop() {
+        val caller = PhoneCaller("remote", "remote", "call", runLifecycle = 1)
+        fun remote() = sessions.run(sessions.admit(caller, PhoneTasks.DEFAULT_IDLE_MS), PhoneToolCatalog.APPS, emptyMap())
+        assertFalse(remote().isError)
+        assertFalse(invoke("host").isError)
+        val record = task("remote", "remote")
+        val first = checkNotNull(record.tasks.activeOwner())
+        record.tasks.waive()
+        time.addAndGet(PhoneTasks.DEFAULT_IDLE_MS + 1)
+        assertTrue(record.tasks.expireIdle())
+        assertFalse(task("host").tasks.expireIdle())
+        assertFalse(record.tasks.snapshot().active)
+        assertFalse(record.tasks.isWaived)
+        assertFalse(remote().isError)
+        assertNotEquals(first.taskId, record.tasks.snapshot().id)
+        assertTrue(sessions.stop(record, "user stop"))
+        time.addAndGet(PhoneTasks.DEFAULT_IDLE_MS + record.tasks.stopHoldMs + 1)
+        assertFalse(record.tasks.expireIdle())
+        assertTrue(remote().isError)
+    }
+
     @Test fun stopAllEndsAnIdleProjectedLegacyScopeWithoutHoldingOrKeepingItsApprovals() {
         assertFalse(invoke(null).isError)
         val oldOwner = checkNotNull(legacy.activeOwner())

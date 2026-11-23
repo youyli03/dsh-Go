@@ -1,8 +1,8 @@
 # Android remote control / Android 远控
 
-The **Remote control** mode connects to an SSH server and requests a reverse forward bound to server-side `127.0.0.1`. The Android foreground service holds the connection after switching modes, going to the home screen, or locking. To stop it, use the mode page or the notification. Auto-start starts the connection when the App opens, not when Android boots, and does not restore a temporary permission grant.
+The **Remote control** mode connects to an SSH server and requests a reverse forward bound to server-side `127.0.0.1`. The Android foreground service holds the connection after switching modes, going to the home screen, or locking. To stop it, use the mode page or the notification. Auto-start connects when the app opens. The phone control switch is saved separately and retains the phone's existing confirmation rules.
 
-「远控」模式通过 SSH 反向转发，在服务器端请求监听 `127.0.0.1`。切换模式、退到桌面或锁屏后，连接由 Android 前台服务维持。可从页面或通知停止。自启动只在打开 App 时连 SSH，不是开机启动，也不会恢复限时授权。
+「远控」模式通过 SSH 反向转发，在服务器端请求监听 `127.0.0.1`。切换模式、退到桌面或锁屏后，连接由 Android 前台服务维持。可从页面或通知停止。自启动在打开 App 时连接。远控手机操控开关单独保存，开启后沿用手机原有的确认规则。
 
 ## Server / 服务器
 

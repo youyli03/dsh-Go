@@ -81,7 +81,7 @@ internal class RemoteControlService : Service() {
         val config = try { RemoteControlConfig.read(this) } catch (_: Exception) {
             report("error", "storage_failed"); return
         }
-        val endpoint = try { RemoteControlMcp.start(this) } catch (_: Exception) {
+        val endpoint = try { RemoteControlMcp.start(this, launchId) } catch (_: Exception) {
             report("error", "mcp_start_failed"); return
         }
         endpoint.use {

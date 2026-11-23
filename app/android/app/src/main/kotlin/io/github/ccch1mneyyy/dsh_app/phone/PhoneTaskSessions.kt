@@ -184,7 +184,9 @@ class PhoneTaskSessions(
     }
 
     /** Called while PhoneBridge still holds its launch lock, before dispatch enters its pool. */
-    fun admit(attribution: PhoneCaller?): Admission {
+    fun admit(attribution: PhoneCaller?): Admission = admit(attribution, Long.MAX_VALUE)
+
+    internal fun admit(attribution: PhoneCaller?, idleMs: Long): Admission {
         val startedAt = clock()
         // Platform state reads may use Binder; bind their result to the current stop epoch.
         val readinessEpoch = synchronized(lock) { epoch }
@@ -207,7 +209,7 @@ class PhoneTaskSessions(
                 if (!reserve(key)) return Admission(null, epoch, CAPACITY_MESSAGE, startedAt = startedAt)
             }
             val task = entries.getOrPut(key) {
-                val tasks = PhoneTasks(clock = clock, idleMs = Long.MAX_VALUE, idSource = idSource)
+                val tasks = PhoneTasks(clock = clock, idleMs = idleMs, idSource = idSource)
                 Task(caller!!.sessionId, caller.runId, tasks, create(tasks, caller.sessionId))
             }
             if (!blocked(task) && !task.closing) lastAdmitted[task.sessionId] = task
@@ -278,9 +280,9 @@ class PhoneTaskSessions(
                 task.running = true
                 running = true
             }
-            // Legacy can start another logical task in this same record. Clean the prior
+            // Idle-enabled callers can start another task in this same record. Clean the prior
             // scope before beginning it, while this call exclusively owns the execution slot.
-            if (task.sessionId == null && !task.tasks.isActive && !task.resourcesReleased) {
+            if (task.tasks.idleMs != Long.MAX_VALUE && !task.tasks.isActive && !task.resourcesReleased) {
                 try { releasePhysical(task, task.resourceTaskId) } catch (_: Exception) {
                     synchronized(lock) { task.cleanupFailed = true }
                     return stopped()
@@ -290,10 +292,10 @@ class PhoneTaskSessions(
             owner = when (val b = task.tasks.begin(admission.scopeEpoch)) {
                 is PhoneTasks.Begin.Go -> {
                     if (b.newTask) {
-                        // A legacy idle rollover can create a scope before its old inactive
+                        // An idle rollover can create a scope before its old inactive
                         // listener settles. Do not overwrite that old trace/resource identity.
                         val previous = synchronized(lock) { task.skillScope?.takeUnless { it.settled } }
-                        if (previous != null) {
+                        if (previous != null || !task.resourcesReleased) {
                             try {
                                 if (!task.resourcesReleased) releasePhysical(task, task.resourceTaskId)
                                 synchronized(lock) { settleSkill(task, null) }

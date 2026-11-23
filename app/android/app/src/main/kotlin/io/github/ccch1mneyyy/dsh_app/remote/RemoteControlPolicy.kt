@@ -2,41 +2,28 @@ package io.github.ccch1mneyyy.dsh_app.remote
 
 import android.app.KeyguardManager
 import android.content.Context
-import android.os.SystemClock
 import android.os.PowerManager
 
 /** A remote connection is not a grant. Each admitted request has its own cancellation fence. */
-internal class RemoteControlPolicy(private val isLocked: () -> Boolean, private val elapsed: () -> Long) {
+internal class RemoteControlPolicy(private val isLocked: () -> Boolean) {
     constructor(context: Context) : this({
         context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false ||
             context.getSystemService(PowerManager::class.java)?.isInteractive != true
-    }, SystemClock::elapsedRealtime)
+    })
     private val lock = Any()
     private var selected = "confirm"
-    private var timedUntil = 0L
-    private var previous = "confirm"
     private val active = LinkedHashMap<Call, () -> Unit>()
 
-    internal class Call(val operation: String, val phone: Boolean, val mode: String)
+    internal class Call(val operation: String, val phone: Boolean)
 
-    fun mode(): String = synchronized(lock) { currentMode() }
+    fun mode(): String = synchronized(lock) { selected }
     fun activity(): String? = synchronized(lock) { active.keys.firstOrNull()?.operation }
     fun locked(): Boolean = isLocked()
 
-    private fun currentMode(): String {
-        if (selected == "timed" && elapsed() >= timedUntil) selected = previous
-        return selected
-    }
-
     fun setMode(mode: String) {
-        require(mode in setOf("blocked", "confirm", "timed"))
+        require(mode == "blocked" || mode == "confirm")
         val cancel = synchronized(lock) {
-            val old = currentMode()
-            if (old == mode) return
-            if (mode == "timed") {
-                previous = old
-                timedUntil = elapsed() + 5 * 60_000L
-            }
+            if (selected == mode) return
             selected = mode
             removeCalls { it.phone }
         }
@@ -44,13 +31,12 @@ internal class RemoteControlPolicy(private val isLocked: () -> Boolean, private 
     }
 
     fun admit(operation: String, phone: Boolean, cancel: () -> Unit): Call? = synchronized(lock) {
-        val mode = currentMode()
-        if (phone && (locked() || mode == "blocked")) return null
-        Call(operation, phone, mode).also { active[it] = cancel }
+        if (phone && (locked() || selected == "blocked")) return null
+        Call(operation, phone).also { active[it] = cancel }
     }
 
     fun allowed(call: Call): Boolean = synchronized(lock) {
-        call in active && (!call.phone || !locked() && currentMode() == call.mode && call.mode != "blocked")
+        call in active && (!call.phone || !locked() && selected == "confirm")
     }
 
     fun finish(call: Call) { synchronized(lock) { active.remove(call) } }
@@ -63,11 +49,5 @@ internal class RemoteControlPolicy(private val isLocked: () -> Boolean, private 
 
     fun cancelPhoneCalls() = synchronized(lock) { removeCalls { it.phone } }.forEach { it() }
 
-    fun revoke() {
-        val cancel = synchronized(lock) {
-            if (selected == "timed") selected = previous
-            removeCalls { true }
-        }
-        cancel.forEach { it() }
-    }
+    fun revoke() = synchronized(lock) { removeCalls { true } }.forEach { it() }
 }

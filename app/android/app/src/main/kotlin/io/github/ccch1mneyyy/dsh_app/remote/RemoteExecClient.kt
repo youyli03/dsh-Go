@@ -27,6 +27,7 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
             ?: return fail("invalid_prompt")
         if (!RemoteControlState.allowExec || !RemoteControlState.authenticates(credential)) return fail("exec_disabled")
         val origin = runtime.remoteExecOrigin() ?: return fail("engine_unavailable")
+        val sessionMode = RemoteControlState.execSession
         val requestId = UUID.randomUUID().toString()
         val stopped = AtomicBoolean()
         fun cancel() {
@@ -35,11 +36,22 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
             }
         }
         val call = policy.admit("dsh_exec", phone = false, ::cancel) ?: return fail("exec_disabled")
+        if (!executing.compareAndSet(false, true)) {
+            policy.finish(call)
+            return fail("exec_busy")
+        }
         try {
             if (stopped.get() || !policy.allowed(call) || !RemoteControlState.authenticates(credential)) return fail("cancelled")
-            var result = post(origin, "", mapOf("requestId" to requestId, "prompt" to prompt))
+            val request = mutableMapOf("requestId" to requestId, "prompt" to prompt)
+            if (sessionMode) {
+                val sessionId = "dsh-go-exec-${UUID.randomUUID()}"
+                if (!createSession(origin, sessionId)) return fail("session_create_failed")
+                if (stopped.get() || !policy.allowed(call)) return fail("cancelled")
+                request["sessionId"] = sessionId
+            }
+            var result = post(origin, "", request)
             val until = SystemClock.elapsedRealtime() + 310_000L
-            while (result["status"] in setOf("accepted", "starting", "running")) {
+            while (result["status"] in setOf("accepted", "starting", "running", "cancelling")) {
                 if (stopped.get() || !runtime.remoteExecCurrent(origin)) return fail("cancelled")
                 if (SystemClock.elapsedRealtime() >= until) {
                     cancel()
@@ -48,24 +60,41 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
                 Thread.sleep(750)
                 result = post(origin, "/status", mapOf("requestId" to requestId))
             }
-            return if (stopped.get() || !policy.allowed(call)) fail("cancelled") else ToolOutput(Json.write(result))
+            return if (stopped.get() || !policy.allowed(call)) fail("cancelled")
+                else ToolOutput(Json.write(result), isError = result["status"] != "succeeded")
         } catch (_: InterruptedException) {
+            if (sessionMode) cancel()
             Thread.currentThread().interrupt()
             return fail("wait_interrupted")
         } catch (_: Exception) {
+            if (sessionMode) cancel()
             return fail("engine_request_failed")
         } finally {
             policy.finish(call)
+            executing.set(false)
         }
     }
 
-    private fun post(origin: RuntimeController.RemoteExecOrigin, suffix: String, args: Map<String, Any?>): Map<*, *> {
+    private fun createSession(origin: RuntimeController.RemoteExecOrigin, sessionId: String): Boolean {
+        val method = "session/create"
+        val rpcId = UUID.randomUUID().toString()
+        val envelope = mapOf("type" to "client-request", "method" to method, "rpcId" to rpcId,
+            "payload" to mapOf("args" to mapOf("request" to mapOf("sessionId" to sessionId))))
+        val response = post(origin, "/api/$method", envelope, engineRpc = true)
+        val result = response["result"] as? Map<*, *> ?: return false
+        return response["rpcId"] == rpcId && result["ok"] == true &&
+            (result["value"] as? Map<*, *>)?.get("sessionId") == sessionId
+    }
+
+    private fun post(origin: RuntimeController.RemoteExecOrigin, suffix: String, args: Map<String, Any?>,
+        engineRpc: Boolean = false): Map<*, *> {
         check(runtime.remoteExecCurrent(origin))
         val base = URI(origin.base)
         check(base.scheme == "http" && base.host == "127.0.0.1" && base.port in 1..65535)
         var retried = false
         while (true) {
-            val url = URI("http", null, base.host, base.port, "/dsh-go/v1/exec$suffix", null, null).toURL()
+            val path = if (engineRpc) suffix else "/dsh-go/v1/exec$suffix"
+            val url = URI("http", null, base.host, base.port, path, null, null).toURL()
             val connection = url.openConnection(Proxy.NO_PROXY) as HttpURLConnection
             try {
                 connection.instanceFollowRedirects = false
@@ -73,7 +102,7 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
                 connection.connectTimeout = 5_000
                 connection.readTimeout = 15_000
                 connection.doOutput = true
-                connection.setRequestProperty("X-DSH-Go-Exec-Proof", origin.proof)
+                if (!engineRpc) connection.setRequestProperty("X-DSH-Go-Exec-Proof", origin.proof)
                 connection.setRequestProperty("Cookie", cookieOf(origin))
                 connection.setRequestProperty("Content-Type", "application/json")
                 val bytes = Json.write(args).toByteArray(Charsets.UTF_8)
@@ -129,6 +158,7 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
     }
 
     companion object {
+        private val executing = AtomicBoolean()
         private val cancelWorker = Executors.newSingleThreadExecutor()
         val tool = mapOf("name" to "dsh_exec", "description" to "Run one prompt in a new local DSH session.",
             "inputSchema" to mapOf("type" to "object", "required" to listOf("prompt"), "additionalProperties" to false,

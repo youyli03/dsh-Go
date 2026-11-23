@@ -2,33 +2,78 @@ package io.github.ccch1mneyyy.dsh_app.remote
 
 import android.content.Context
 import fi.iki.elonen.NanoHTTPD
+import io.github.ccch1mneyyy.dsh_app.phone.PhoneCaller
+import io.github.ccch1mneyyy.dsh_app.phone.PhoneControl
+import io.github.ccch1mneyyy.dsh_app.phone.ToolOutput
 import java.io.Closeable
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /** The SSH forward targets this per-service, loopback-only endpoint. */
-internal class RemoteControlMcp private constructor(private val context: Context) : NanoHTTPD("127.0.0.1", 0), Closeable {
+internal class RemoteControlMcp private constructor(private val context: Context, private val launchId: Long) :
+    NanoHTTPD("127.0.0.1", 0), Closeable {
     val port: Int get() = listeningPort
-    private val tools = io.github.ccch1mneyyy.dsh_app.phone.PhoneToolCatalog.listJson()
+    private val tools = io.github.ccch1mneyyy.dsh_app.phone.PhoneToolCatalog.listJson() + nextRoundTool
     private val policy = RemoteControlState.policy(context)
-    private val sessionId = "remote-phone-${java.util.UUID.randomUUID()}"
+    @Volatile private var sessionId = newSessionId()
+    @Volatile private var closed = false
     private val executing = java.util.concurrent.atomic.AtomicBoolean()
 
-    private fun callPhone(name: String, args: Map<String, Any?>, credential: String): io.github.ccch1mneyyy.dsh_app.phone.ToolOutput {
-        fun refusal(message: String) = io.github.ccch1mneyyy.dsh_app.phone.ToolOutput(message, isError = true)
-        if (!executing.compareAndSet(false, true)) return refusal("A remote phone call is already executing")
+    private fun callPhone(name: String, args: Map<String, Any?>, credential: String): ToolOutput {
+        fun refusal(message: String) = ToolOutput(message, isError = true)
+        if (!executing.compareAndSet(false, true)) return refusal("remote_phone_busy: A remote phone call is already executing")
         val cancellation = java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
         val call = policy.admit(name, phone = true) { cancellation.get()?.invoke() }
         try {
-            if (call == null) return refusal("Remote phone permission unavailable or phone locked")
-            fun allowed() = RemoteControlState.state == "connected" && policy.allowed(call) && RemoteControlState.authenticates(credential)
-            val caller = io.github.ccch1mneyyy.dsh_app.phone.PhoneCaller(sessionId, "remote", java.util.UUID.randomUUID().toString(), 1)
-            val output = io.github.ccch1mneyyy.dsh_app.phone.PhoneControl.get(context).externalCall(caller, name, args, ::allowed) { cancel ->
+            if (call == null) return refusal("remote_phone_unavailable: Remote phone permission unavailable or phone locked")
+            fun allowed() = !closed && launchId == RemoteControlState.launchId &&
+                RemoteControlState.state == "connected" && policy.allowed(call) && RemoteControlState.authenticates(credential)
+            fun registerCancellation(cancel: () -> Unit) {
                 cancellation.set(cancel)
                 if (!allowed()) cancel()
             }
+            if (name == NEXT_ROUND) return startNextRound(args, ::allowed, ::registerCancellation)
+            val output = PhoneControl.get(context).externalCall(roundCaller(), name, args, ::allowed, ::registerCancellation)
             return if (allowed()) output else refusal("Remote phone permission is no longer active")
         } finally {
             if (call != null) policy.finish(call)
             executing.set(false)
+        }
+    }
+
+    private fun roundCaller() = PhoneCaller(sessionId, "remote", UUID.randomUUID().toString(), 1)
+
+    private fun startNextRound(
+        args: Map<String, Any?>,
+        allowed: () -> Boolean,
+        registerCancellation: (() -> Unit) -> Unit,
+    ): ToolOutput {
+        fun failure(code: String, message: String) = ToolOutput("$code: $message", isError = true)
+        if (args.isNotEmpty()) return failure("invalid_arguments", "This tool takes no arguments.")
+        val request = RemoteControlState.RoundRequest()
+        registerCancellation { request.decision.cancel(false) }
+        if (!RemoteControlState.showRoundRequest(request))
+            return failure("next_round_unavailable", "Remote phone permission is no longer active.")
+        try {
+            val approved = request.decision.get(45, TimeUnit.SECONDS)
+            if (!approved) return failure("next_round_denied", "The phone user declined the request.")
+            synchronized(this) {
+                if (!allowed()) return failure("next_round_unavailable", "Remote phone permission is no longer active.")
+                PhoneControl.peek()?.externalEnd(roundCaller())
+                if (!allowed()) return failure("next_round_unavailable", "Remote phone permission is no longer active.")
+                sessionId = newSessionId()
+                return ToolOutput("next_round_started: Start with a fresh screen observation.")
+            }
+        } catch (_: TimeoutException) {
+            return failure("next_round_timeout", "No confirmation on the phone. Open the DSH Go Remote control page to approve a new request.")
+        } catch (_: java.util.concurrent.CancellationException) {
+            return failure("next_round_unavailable", "Remote phone permission is no longer active.")
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return failure("next_round_unavailable", "The request was interrupted.")
+        } finally {
+            RemoteControlState.clearRoundRequest(request)
         }
     }
 
@@ -55,8 +100,8 @@ internal class RemoteControlMcp private constructor(private val context: Context
         if (!RemoteControlState.authenticates(candidate)) return text(Response.Status.UNAUTHORIZED)
         val offered = if (RemoteControlState.allowExec) tools + RemoteExecClient.tool else tools
         val protocol = RemoteMcpProtocol(offered) { name, args ->
-            if (!RemoteControlState.authenticates(candidate))
-                io.github.ccch1mneyyy.dsh_app.phone.ToolOutput("Remote credential was revoked", isError = true)
+            if (closed || launchId != RemoteControlState.launchId || !RemoteControlState.authenticates(candidate))
+                ToolOutput("Remote credential was revoked", isError = true)
             else if (name == "dsh_exec") RemoteExecClient(context).execute(args, candidate)
             else callPhone(name, args, candidate)
         }
@@ -65,14 +110,23 @@ internal class RemoteControlMcp private constructor(private val context: Context
     }
 
     override fun close() {
+        closed = true
         stop()
-        io.github.ccch1mneyyy.dsh_app.phone.PhoneControl.peek()?.externalEnd(
-            io.github.ccch1mneyyy.dsh_app.phone.PhoneCaller(sessionId, "remote", "close", 1),
-        )
+        synchronized(this) { PhoneControl.peek()?.externalEnd(roundCaller()) }
     }
 
     companion object {
-        fun start(context: Context): RemoteControlMcp = RemoteControlMcp(context.applicationContext).also {
+        private const val NEXT_ROUND = "start_next_round"
+        private val nextRoundTool = mapOf(
+            "name" to NEXT_ROUND,
+            "description" to "Ask the phone user to approve a fresh remote phone round on the DSH Go Remote control page. " +
+                "Waits up to 45 seconds. Use after a stopped round or when starting a new phone task.",
+            "inputSchema" to mapOf("type" to "object", "properties" to emptyMap<String, Any?>(), "additionalProperties" to false),
+        )
+
+        private fun newSessionId() = "remote-phone-${UUID.randomUUID()}"
+
+        fun start(context: Context, launchId: Long): RemoteControlMcp = RemoteControlMcp(context.applicationContext, launchId).also {
             try { it.start(SOCKET_READ_TIMEOUT, true) } catch (failure: Exception) { it.close(); throw failure }
         }
     }

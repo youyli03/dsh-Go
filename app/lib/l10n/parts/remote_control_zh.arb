@@ -20,6 +20,9 @@
     }
   },
   "rcActivity": "正在调用 {tool}",
+  "rcApproveNextRound": "允许开启下一轮",
+  "rcNextRoundRequest": "远端请求开启新的手机操作轮次。当前轮次会结束，旧操作不会重试。",
+  "rcDenyNextRound": "拒绝开启下一轮",
   "@rcActivity": {
     "placeholders": {
       "tool": {
@@ -33,9 +36,8 @@
   "rcCopyUrl": "复制服务器上的 MCP 地址",
   "rcRotateToken": "更新 MCP 令牌",
   "rcPermission": "MCP 手机操控权限",
-  "rcBlocked": "禁止",
-  "rcConfirm": "按现有规则确认",
-  "rcTimed": "限时允许（5 分钟）",
+  "rcPhoneControlEnabled": "允许远控操作手机",
+  "rcPhoneControlHint": "沿用手机操控的确认规则。关闭后停止进行中的远控手机操作。",
   "rcSshConfig": "SSH 配置",
   "rcHost": "服务器地址",
   "rcSshPort": "SSH 端口",
@@ -51,6 +53,8 @@
   "rcRotateTokenHint": "更新后旧令牌立即失效。新令牌会复制到剪贴板。",
   "rcPassphrase": "SSH 私钥口令（如有）",
   "rcAllowExec": "允许委托 DSH 执行提示词",
+  "rcExecSession": "允许在 DSH 对话中使用工具",
+  "rcExecSessionHint": "每条提示词创建一个新对话。对话可写入工作区，需要额外权限时在手机上确认。保存设置后生效。",
   "rcPasteKey": "从剪贴板粘贴 SSH 私钥",
   "rcKeyStaged": "已粘贴，保存配置后生效"
 }

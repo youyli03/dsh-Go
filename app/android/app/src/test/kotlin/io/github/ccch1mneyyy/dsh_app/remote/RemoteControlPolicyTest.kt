@@ -8,7 +8,7 @@ class RemoteControlPolicyTest {
         var locked = false
         var phoneCancels = 0
         var execCancels = 0
-        val policy = RemoteControlPolicy({ locked }, { 0L })
+        val policy = RemoteControlPolicy { locked }
         val phone = checkNotNull(policy.admit("tap", true) { phoneCancels++ })
         val exec = checkNotNull(policy.admit("dsh_exec", false) { execCancels++ })
         locked = true
@@ -24,14 +24,18 @@ class RemoteControlPolicyTest {
         assertEquals(1, execCancels)
     }
 
-    @Test fun expiredTemporaryGrantCannotAuthorizeInFlightCall() {
-        var now = 0L
-        val policy = RemoteControlPolicy({ false }, { now })
-        policy.setMode("timed")
-        val call = checkNotNull(policy.admit("tap", true) {})
+    @Test fun switchingOffRevokesPhoneCallsWithoutRevokingExec() {
+        val policy = RemoteControlPolicy { false }
+        var cancels = 0
+        val call = checkNotNull(policy.admit("tap", true) { cancels++ })
+        val exec = checkNotNull(policy.admit("dsh_exec", false) {})
         assertTrue(policy.allowed(call))
-        now = 300_000L
+        policy.setMode("blocked")
+        assertEquals(1, cancels)
+        assertNull(policy.admit("screen", true) {})
+        assertTrue(policy.allowed(exec))
+        policy.setMode("confirm")
         assertFalse(policy.allowed(call))
-        assertEquals("confirm", policy.mode())
+        assertNotNull(policy.admit("screen", true) {})
     }
 }

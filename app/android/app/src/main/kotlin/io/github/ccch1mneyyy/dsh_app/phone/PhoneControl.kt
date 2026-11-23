@@ -236,7 +236,7 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
             return RuntimeController.get(app).diagnosticsTool.call(args, caller)
         }
         externalSessions.add(caller.sessionId)
-        val admission = sessions.admit(caller)
+        val admission = sessions.admit(caller, idleMs = PhoneTasks.DEFAULT_IDLE_MS)
         admission.authorization = allowed
         registerCancellation { sessions.expire(admission) }
         if (!allowed()) sessions.expire(admission)
@@ -311,8 +311,6 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
         val observations = PhoneTaskObservations(task)
         val env = object : PhoneEnv by this@PhoneControl {
             override fun gate(): UserGate = gate
-            override fun allowOrdinaryFirstWrite(): Boolean = sessionId != null && sessionId in externalSessions &&
-                io.github.ccch1mneyyy.dsh_app.remote.RemoteControlState.policy(app).mode() == "timed"
             override fun onTaskStarted(owner: PhoneTasks.Owner) {} // Registry owns managed trace start.
             override fun driver(screen: PhoneScreen, owner: PhoneTasks.Owner): PhoneDriver? =
                 driverForTask(screen, task, owner)?.let { observations.bind(it, owner) }

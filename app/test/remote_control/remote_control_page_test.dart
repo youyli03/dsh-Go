@@ -67,10 +67,12 @@ void main() {
 
   testWidgets('a permission choice is applied through native state', (tester) async {
     await pump(tester);
-    await tester.tap(find.text(l10n.rcTimed));
+    final control = find.text(l10n.rcPhoneControlEnabled);
+    await tester.ensureVisible(control);
+    await tester.tap(control);
     await tester.pump();
     final permission = calls.singleWhere((call) => call.method == 'setPermission');
-    expect(permission.arguments, {'permission': 'timed'});
+    expect(permission.arguments, {'permission': 'blocked'});
     await dispose(tester);
   });
 
@@ -96,4 +98,41 @@ void main() {
     expect(find.text('http://127.0.0.1:18765/mcp'), findsOneWidget);
     await dispose(tester);
   });
+
+  testWidgets('session tools are a separate saved choice for prompt delegation', (tester) async {
+    status = {...status, 'allowExec': true};
+    await pump(tester);
+    final sessionTools = find.text(l10n.rcExecSession);
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -750));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(sessionTools);
+    await tester.pump();
+    await tester.tap(sessionTools);
+    await tester.pump();
+    final save = find.text(l10n.rcSave);
+    await tester.ensureVisible(save);
+    await tester.pump();
+    await tester.tap(save);
+    await tester.pump();
+    final config = calls.singleWhere((call) => call.method == 'configure').arguments as Map;
+    expect(config['allowExec'], isTrue);
+    expect(config['execSession'], isTrue);
+    await dispose(tester);
+  });
+
+  for (final approved in [true, false]) {
+    testWidgets('next-round decision is bound to the shown request ($approved)', (tester) async {
+      status = {...status, 'state': 'connected', 'roundRequestId': 'round-request'};
+      await pump(tester);
+      final decision = find.text(approved ? l10n.rcApproveNextRound : l10n.rcDenyNextRound);
+      await tester.ensureVisible(decision);
+      await tester.tap(decision);
+      await tester.pump();
+      expect(calls.singleWhere((call) => call.method == 'decideRound').arguments, {
+        'id': 'round-request',
+        'approved': approved,
+      });
+      await dispose(tester);
+    });
+  }
 }

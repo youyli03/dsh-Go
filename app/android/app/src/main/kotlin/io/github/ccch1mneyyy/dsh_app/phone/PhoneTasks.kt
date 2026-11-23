@@ -15,7 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 class PhoneTasks(
     private val clock: () -> Long = System::currentTimeMillis,
-    val idleMs: Long = 3 * 60_000L,
+    val idleMs: Long = DEFAULT_IDLE_MS,
     val stopHoldMs: Long = 30_000L,
     private val idSource: (() -> Long)? = null,
 ) {
@@ -547,6 +547,7 @@ class PhoneTasks(
     }
 
     companion object {
+        internal const val DEFAULT_IDLE_MS = 3 * 60_000L
         /** 本轮不再执行: the person stopped this turn. The next turn starts fresh and asks again. */
         // l10n:keep agent stop protocol
         const val STOPPED_MESSAGE = "你停止了本轮手机操作，本轮不再执行手机动作；下一轮会恢复，届时会重新向你确认"

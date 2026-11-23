@@ -19102,6 +19102,16 @@ class L10nEn extends L10n {
   }
 
   @override
+  String get rcApproveNextRound => 'Allow next round';
+
+  @override
+  String get rcNextRoundRequest =>
+      'The remote agent is asking to start a new phone operation round. The current round will end and old actions will not be retried.';
+
+  @override
+  String get rcDenyNextRound => 'Decline next round';
+
+  @override
   String get rcStop => 'Stop remote control';
 
   @override
@@ -19120,13 +19130,11 @@ class L10nEn extends L10n {
   String get rcPermission => 'MCP phone control permission';
 
   @override
-  String get rcBlocked => 'Blocked';
+  String get rcPhoneControlEnabled => 'Allow remote phone control';
 
   @override
-  String get rcConfirm => 'Use existing approval rules';
-
-  @override
-  String get rcTimed => 'Allow temporarily (5 minutes)';
+  String get rcPhoneControlHint =>
+      'Uses your phone control confirmation rules. Turning this off stops ongoing remote phone actions.';
 
   @override
   String get rcSshConfig => 'SSH configuration';
@@ -19174,6 +19182,13 @@ class L10nEn extends L10n {
 
   @override
   String get rcAllowExec => 'Allow prompt delegation to DSH';
+
+  @override
+  String get rcExecSession => 'Allow tools in DSH sessions';
+
+  @override
+  String get rcExecSessionHint =>
+      'Each prompt starts a new session. It can write in the workspace and asks on the phone when extra permissions are required. Save the settings to apply.';
 
   @override
   String get rcPasteKey => 'Paste SSH private key from clipboard';

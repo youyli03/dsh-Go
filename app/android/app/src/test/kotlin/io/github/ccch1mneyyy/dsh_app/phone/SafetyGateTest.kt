@@ -7,17 +7,6 @@ class SafetyGateTest {
     private fun target(label: String = "打开", password: Boolean = false, secret: Boolean = false) =
         TargetInfo("s1", 1, "按钮", label, "example.app", "Example", password, secret, password || secret)
 
-    @Test fun scopedTemporaryGrantOnlySkipsOrdinaryFirstWrite() {
-        var granted = true
-        val gate = SafetyGate({ PhonePolicies(confirmMode = ConfirmMode.ASK) }, PhoneTasks(), { null },
-            allowOrdinaryFirstWrite = { granted })
-        assertSame(SafetyGate.Verdict.Allow, gate.checkWrite(WriteKind.TAP, target(), "example.app", null))
-        assertTrue(gate.checkWrite(WriteKind.TYPE, target(), "example.app", null, submit = true) is SafetyGate.Verdict.Confirm)
-        assertTrue(gate.checkWrite(WriteKind.TAP, target(), "com.icbc", null) is SafetyGate.Verdict.Refuse)
-        granted = false
-        assertTrue(gate.checkWrite(WriteKind.TAP, target(), "example.app", null) is SafetyGate.Verdict.Confirm)
-    }
-
     @Test fun hardRulesRefuseWhileLockedEvenWhenConfirmationsAreWaived() {
         for (mode in listOf(ConfirmMode.ASK, ConfirmMode.ALWAYS)) {
             val gate = SafetyGate({ PhonePolicies(confirmMode = mode) }, PhoneTasks(), { null })

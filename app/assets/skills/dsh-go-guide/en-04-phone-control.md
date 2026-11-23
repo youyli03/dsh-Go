@@ -9,11 +9,15 @@ Remote control lets an Agent on your computer (Claude Code, Codex and the like) 
 1. Have an SSH server you can sign in to. On the Remote control page, fill in the server, user, SSH port and remote port, and paste the private key; before the first connection, copy the SHA256 host fingerprint from a trusted server console and enter it.
 2. Tap Start. The App opens an MCP endpoint on the phone's loopback address and forwards it over SSH to `127.0.0.1:<remote port>` on the server, so only SSH is exposed publicly.
 3. Create a token first. In the MCP client on the server, use `http://127.0.0.1:<remote port>/mcp` with `Authorization: Bearer <token>`. Keep the token in the server configuration, never in a URL, repository or shared configuration.
-4. Under access, choose Blocked, Confirm as usual or Timed allow. Timed allow lasts five minutes and only skips the first-app confirmation for ordinary actions; passwords, payments, system pages and the do-not-touch list still ask.
+4. Turn on **Allow remote phone control** to use the phone's existing confirmation rules. Turning the switch off stops ongoing remote phone actions.
 
 Use `GatewayPorts no` on the server and confirm the listener is loopback only. The connection survives switching modes, going home or locking, kept by the foreground notification, whose Stop ends it. While locked the tunnel stays up but phone tools are refused, queued actions are cancelled, and a new call is needed after unlocking. Stopping remote control or rotating the token revokes in-flight grants.
 
-With dsh_exec enabled, an external Agent may send one prompt: the phone starts a new conversation, runs one turn and returns the final text and conversation id. It uses the model only, calls no tools and starts no subagent.
+After phone operations are stopped, an external agent can call `start_next_round` to request a fresh round. Unlock the phone and tap **Allow next round** on the Remote control page. The agent waits up to 45 seconds and should read the screen again after success. Declining the request or letting it expire keeps the current round.
+
+When no phone call is running and the task is unpaused, about three minutes without a phone operation ends the current task. The SSH connection stays up, and the next operation follows the usual confirmation rules. A manually stopped round still needs an explicit restart.
+
+With dsh_exec enabled, an external agent can send one prompt and receive the final text and conversation ID. By default it only calls the model. To use tools, turn on **Allow tools in DSH sessions** on the Remote control page and save. Each call starts a new session with workspace write access and uses the session's confirmation rules when extra access is needed. Phone tools retain their own authorization and stop rules.
 
 ## iPhone / iOS
 

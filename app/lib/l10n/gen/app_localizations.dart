@@ -33264,6 +33264,24 @@ abstract class L10n {
   /// **'正在调用 {tool}'**
   String rcActivity(String tool);
 
+  /// No description provided for @rcApproveNextRound.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许开启下一轮'**
+  String get rcApproveNextRound;
+
+  /// No description provided for @rcNextRoundRequest.
+  ///
+  /// In zh, this message translates to:
+  /// **'远端请求开启新的手机操作轮次。当前轮次会结束，旧操作不会重试。'**
+  String get rcNextRoundRequest;
+
+  /// No description provided for @rcDenyNextRound.
+  ///
+  /// In zh, this message translates to:
+  /// **'拒绝开启下一轮'**
+  String get rcDenyNextRound;
+
   /// No description provided for @rcStop.
   ///
   /// In zh, this message translates to:
@@ -33300,23 +33318,17 @@ abstract class L10n {
   /// **'MCP 手机操控权限'**
   String get rcPermission;
 
-  /// No description provided for @rcBlocked.
+  /// No description provided for @rcPhoneControlEnabled.
   ///
   /// In zh, this message translates to:
-  /// **'禁止'**
-  String get rcBlocked;
+  /// **'允许远控操作手机'**
+  String get rcPhoneControlEnabled;
 
-  /// No description provided for @rcConfirm.
+  /// No description provided for @rcPhoneControlHint.
   ///
   /// In zh, this message translates to:
-  /// **'按现有规则确认'**
-  String get rcConfirm;
-
-  /// No description provided for @rcTimed.
-  ///
-  /// In zh, this message translates to:
-  /// **'限时允许（5 分钟）'**
-  String get rcTimed;
+  /// **'沿用手机操控的确认规则。关闭后停止进行中的远控手机操作。'**
+  String get rcPhoneControlHint;
 
   /// No description provided for @rcSshConfig.
   ///
@@ -33407,6 +33419,18 @@ abstract class L10n {
   /// In zh, this message translates to:
   /// **'允许委托 DSH 执行提示词'**
   String get rcAllowExec;
+
+  /// No description provided for @rcExecSession.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许在 DSH 对话中使用工具'**
+  String get rcExecSession;
+
+  /// No description provided for @rcExecSessionHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'每条提示词创建一个新对话。对话可写入工作区，需要额外权限时在手机上确认。保存设置后生效。'**
+  String get rcExecSessionHint;
 
   /// No description provided for @rcPasteKey.
   ///

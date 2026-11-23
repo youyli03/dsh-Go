@@ -28,6 +28,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
   Map<String, Object?>? _status;
   bool _autoStart = false;
   bool _allowExec = false;
+  bool _execSession = false;
   bool _visible = false;
   bool _foreground = true;
   bool _reading = false;
@@ -81,6 +82,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
           _remotePort.text = result['remotePort']?.toString() ?? '18765';
           _autoStart = result['autoStart'] == true;
           _allowExec = result['allowExec'] == true;
+          _execSession = result['execSession'] == true;
           _fingerprint.text = result['fingerprint']?.toString() ?? '';
         }
         _status = result;
@@ -147,6 +149,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
       if (_privateKey.text.trim().isNotEmpty) 'privateKey': _privateKey.text.trim(),
       'autoStart': _autoStart,
       'allowExec': _allowExec,
+      'execSession': _execSession,
       'fingerprint': _fingerprint.text.trim(),
       if (_privateKey.text.trim().isNotEmpty) 'passphrase': _passphrase.text,
     });
@@ -192,6 +195,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
       _ => _status == null && !_unavailable && _error == null ? l10n.rcLoading : l10n.rcStopped,
     };
     final activity = status['activity'] as String?;
+    final roundRequestId = status['roundRequestId'] as String?;
     final permission = status['permission'] as String? ?? 'confirm';
     final hasToken = status['hasToken'] == true;
     final url = status['url'] as String?;
@@ -223,6 +227,21 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
                   : Icon(active ? Icons.link : Icons.link_off),
             ),
             if (active && activity != null && activity.isNotEmpty) SettingsTile(title: l10n.rcActivity(activity)),
+            if (connection == 'connected' && roundRequestId != null) ...[
+              SettingsTile(
+                title: l10n.rcApproveNextRound,
+                subtitle: l10n.rcNextRoundRequest,
+                onTap: disabled
+                    ? null
+                    : () => unawaited(_act('decideRound', {'id': roundRequestId, 'approved': true})),
+              ),
+              SettingsTile(
+                title: l10n.rcDenyNextRound,
+                onTap: disabled
+                    ? null
+                    : () => unawaited(_act('decideRound', {'id': roundRequestId, 'approved': false})),
+              ),
+            ],
             if (!_unavailable)
               SettingsTile(
                 title: active ? l10n.rcStop : l10n.rcStart,
@@ -242,14 +261,14 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
           SettingsSection(
             title: l10n.rcPermission,
             children: [
-              for (final item in {'blocked': l10n.rcBlocked, 'confirm': l10n.rcConfirm, 'timed': l10n.rcTimed}.entries)
-                SettingsTile(
-                  title: item.value,
-                  trailing: permission == item.key ? const Icon(Icons.check) : null,
-                  onTap: disabled || permission == item.key
-                      ? null
-                      : () => unawaited(_act('setPermission', {'permission': item.key})),
-                ),
+              SettingsSwitchTile(
+                title: l10n.rcPhoneControlEnabled,
+                subtitle: l10n.rcPhoneControlHint,
+                value: permission == 'confirm',
+                onChanged: disabled
+                    ? null
+                    : (enabled) => unawaited(_act('setPermission', {'permission': enabled ? 'confirm' : 'blocked'})),
+              ),
             ],
           ),
         if (!_unavailable)
@@ -281,6 +300,13 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
                 value: _allowExec,
                 onChanged: disabled || active ? null : (value) => setState(() => _allowExec = value),
               ),
+              if (_allowExec)
+                SettingsSwitchTile(
+                  title: l10n.rcExecSession,
+                  subtitle: l10n.rcExecSessionHint,
+                  value: _execSession,
+                  onChanged: disabled || active ? null : (value) => setState(() => _execSession = value),
+                ),
               SettingsSwitchTile(
                 title: l10n.rcAutoStart,
                 value: _autoStart,
