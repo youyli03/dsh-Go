@@ -37,6 +37,7 @@ void main() {
       calls.add(call);
       if (call.method == 'status') return status;
       if (call.method == 'rotateToken') return 'token-value';
+      if (call.method == 'decideRound') status.remove('roundRequestId');
       return status;
     });
   });
@@ -124,7 +125,9 @@ void main() {
     testWidgets('next-round decision is bound to the shown request ($approved)', (tester) async {
       status = {...status, 'state': 'connected', 'roundRequestId': 'round-request'};
       await pump(tester);
+      await tester.pumpAndSettle();
       final decision = find.text(approved ? l10n.rcApproveNextRound : l10n.rcDenyNextRound);
+      expect(find.byType(AlertDialog), findsOneWidget);
       await tester.ensureVisible(decision);
       await tester.tap(decision);
       await tester.pump();
@@ -135,4 +138,17 @@ void main() {
       await dispose(tester);
     });
   }
+
+  testWidgets('an expired next-round request dismisses its confirmation', (tester) async {
+    status = {...status, 'state': 'connected', 'roundRequestId': 'expiring-request'};
+    await pump(tester);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    status.remove('roundRequestId');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(calls.where((call) => call.method == 'decideRound'), isEmpty);
+    await dispose(tester);
+  });
 }

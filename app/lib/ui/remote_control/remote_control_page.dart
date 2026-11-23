@@ -36,6 +36,10 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
   bool _unavailable = false;
   String? _error;
   Timer? _poll;
+  DialogRoute<bool>? _roundDialog;
+  String? _roundDialogId;
+
+  bool get _canPoll => _foreground && (_visible || _roundDialog?.isCurrent == true);
 
   @override
   void initState() {
@@ -59,7 +63,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
   }
 
   void _syncPoll() {
-    if (!_visible || !_foreground) {
+    if (!_canPoll) {
       _poll?.cancel();
       _poll = null;
     } else if (_poll == null) {
@@ -69,11 +73,11 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
   }
 
   Future<void> _refresh() async {
-    if (_reading || _working || !_visible || !_foreground) return;
+    if (_reading || _working || !_canPoll) return;
     _reading = true;
     try {
       final result = await RemoteControlChannel.status();
-      if (!mounted || _working || !_visible || !_foreground) return;
+      if (!mounted || _working || !_canPoll) return;
       setState(() {
         if (_status == null) {
           _host.text = result['host']?.toString() ?? '';
@@ -89,6 +93,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
         _unavailable = false;
         if (_error == 'status') _error = null;
       });
+      _showRoundRequest(result['state'] == 'connected' ? result['roundRequestId'] as String? : null);
     } on MissingPluginException {
       _poll?.cancel();
       _poll = null;
@@ -98,6 +103,42 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
     } finally {
       _reading = false;
     }
+  }
+
+  void _showRoundRequest(String? id) {
+    if (_roundDialogId == id) return;
+    final previous = _roundDialog;
+    _roundDialog = null;
+    _roundDialogId = null;
+    if (previous != null && previous.isActive) previous.navigator?.removeRoute(previous);
+    if (id == null) return;
+    final navigator = Navigator.of(context);
+    final l10n = context.l10n;
+    final route = DialogRoute<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        content: Text(l10n.rcNextRoundRequest),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.rcDenyNextRound),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.rcApproveNextRound),
+          ),
+        ],
+      ),
+    );
+    _roundDialog = route;
+    _roundDialogId = id;
+    unawaited(navigator.push(route).then((approved) async {
+      if (!mounted || _roundDialog != route) return;
+      _roundDialog = null;
+      _roundDialogId = null;
+      await _act('decideRound', {'id': id, 'approved': approved == true});
+    }));
   }
 
   Future<void> _act(String name, [Map<String, Object?>? args]) async {
@@ -195,7 +236,6 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
       _ => _status == null && !_unavailable && _error == null ? l10n.rcLoading : l10n.rcStopped,
     };
     final activity = status['activity'] as String?;
-    final roundRequestId = status['roundRequestId'] as String?;
     final permission = status['permission'] as String? ?? 'confirm';
     final hasToken = status['hasToken'] == true;
     final url = status['url'] as String?;
@@ -227,21 +267,6 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
                   : Icon(active ? Icons.link : Icons.link_off),
             ),
             if (active && activity != null && activity.isNotEmpty) SettingsTile(title: l10n.rcActivity(activity)),
-            if (connection == 'connected' && roundRequestId != null) ...[
-              SettingsTile(
-                title: l10n.rcApproveNextRound,
-                subtitle: l10n.rcNextRoundRequest,
-                onTap: disabled
-                    ? null
-                    : () => unawaited(_act('decideRound', {'id': roundRequestId, 'approved': true})),
-              ),
-              SettingsTile(
-                title: l10n.rcDenyNextRound,
-                onTap: disabled
-                    ? null
-                    : () => unawaited(_act('decideRound', {'id': roundRequestId, 'approved': false})),
-              ),
-            ],
             if (!_unavailable)
               SettingsTile(
                 title: active ? l10n.rcStop : l10n.rcStart,

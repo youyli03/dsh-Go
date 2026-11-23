@@ -56,7 +56,6 @@ function fixture(t, options = {}) {
     return services[name];
   } }, {
     proofDigest: digest,
-    userMessage: spec => spec,
     readBody: async req => Buffer.from(JSON.stringify(req.body)),
     send: (res, status, data) => {
       if (typeof res.writeHead === 'function') {
@@ -90,7 +89,12 @@ function fixture(t, options = {}) {
 }
 
 function normalAgent({ approval = 'ask', hold = false } = {}) {
-  const session = { id: `dsh-go-exec-${randomUUID()}`, events: [] };
+  const events = [];
+  const session = {
+    id: `dsh-go-exec-${randomUUID()}`,
+    get seq() { return events.length; },
+    eventAt: seq => events[seq],
+  };
   let sandboxMode = 'danger-full-access', approvalPolicy = 'never', submissions = 0, cancellations = 0;
   const services = {
     permissionPresets: {
@@ -108,9 +112,11 @@ function normalAgent({ approval = 'ask', hold = false } = {}) {
     followup(message) {
       assert.equal(sandboxMode, 'workspace-write');
       assert.equal(approvalPolicy, 'ask');
+      assert.equal(message.role, 'user');
+      assert.match(message.id, /^[a-f0-9-]{36}$/);
       submissions++;
-      session.events.push({ type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: message });
-      if (!hold) session.events.push(
+      events.push({ type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: message });
+      if (!hold) events.push(
         { type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'session reply' }] } } },
         { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
       );

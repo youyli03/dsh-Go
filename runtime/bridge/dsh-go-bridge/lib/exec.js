@@ -22,7 +22,7 @@ let launchProof = (() => {
   return process.platform === 'linux' && HEX.test(proof ?? '') ? digest(proof) : undefined;
 })();
 
-async function runApprovedSession(ctx, record, prompt, userMessage) {
+async function runApprovedSession(ctx, record, prompt) {
   const { requestId, sessionId } = record.result;
   const localStop = record.abort.signal;
   const signal = AbortSignal.any([localStop, AbortSignal.timeout(5 * 60_000)]);
@@ -41,19 +41,21 @@ async function runApprovedSession(ctx, record, prompt, userMessage) {
     const permissions = scope?.get('permissionPresets') ?? ctx.get('permissionPresets');
     const sandbox = scope?.get('sandboxPolicy');
     const approval = scope?.get('approval');
-    const blank = () => !session.events.some(event =>
-      event.type === 'user/message' || event.type === 'turn/start' || event.type === 'agent/inbox/spliced');
+    const blank = () => {
+      for (let seq = 0; seq < session.seq; seq++) {
+        const type = session.eventAt(seq)?.type;
+        if (type === 'user/message' || type === 'turn/start' || type === 'agent/inbox/spliced') return false;
+      }
+      return true;
+    };
     const current = () => ctx.get('agents')?.get(sessionId) === agent && agent.session === session;
     if (typeof agent?.followup !== 'function' || typeof agent.cancel !== 'function' ||
-        typeof sessions?.flush !== 'function' || !Array.isArray(session?.events) ||
-        typeof permissions?.set !== 'function' || typeof sandbox?.resolve !== 'function' ||
-        typeof approval?.effectivePolicy !== 'function' ||
-        !blank())
+        typeof sessions?.flush !== 'function' || typeof session?.eventAt !== 'function' ||
+        !Number.isSafeInteger(session.seq) || session.seq < 0)
       return { status: 'failed', errorCode: 'session-unavailable' };
-    const message = await userMessage({
-      content: [{ type: 'text', text: prompt }],
-      source: { kind: 'user', rpcId: requestId },
-    });
+    if (typeof permissions?.set !== 'function' || typeof permissions.resolve !== 'function' ||
+        typeof sandbox?.resolve !== 'function' || typeof approval?.effectivePolicy !== 'function')
+      return { status: 'failed', errorCode: 'session-permission-unavailable' };
     signal.throwIfAborted();
     if (!current() || !blank())
       return { status: 'failed', errorCode: 'session-unavailable' };
@@ -68,15 +70,17 @@ async function runApprovedSession(ctx, record, prompt, userMessage) {
         sandbox.resolve({ session }).mode !== 'workspace-write' || approval.effectivePolicy(session) !== 'ask' ||
         !blank())
       return { status: 'failed', errorCode: 'session-permission-unavailable' };
-    let cursor = session.events.length, turn, ours = false, other = false, text = '';
+    let cursor = session.seq, turn, ours = false, other = false, text = '';
     signal.addEventListener('abort', cancel, { once: true });
     started = true;
-    agent.followup(message);
+    agent.followup({
+      id: randomUUID(), role: 'user', content: [{ type: 'text', text: prompt }],
+      source: { kind: 'user', rpcId: requestId },
+    });
     while (current()) {
       signal.throwIfAborted();
-      const events = session.events;
-      for (; cursor < events.length; cursor++) {
-        const { type, data } = events[cursor];
+      for (; cursor < session.seq; cursor++) {
+        const { type, data } = session.eventAt(cursor);
         if (type === 'turn/start') turn = data.turn;
         if (type === 'user/message') {
           if (data.source?.rpcId === requestId) ours = true;
@@ -147,9 +151,7 @@ export function takeExecLaunchProof() {
   return proof;
 }
 
-const createSessionMessage = async spec => (await import('@deepseek-ai/dsh-llm')).createUserMessage(spec);
-
-export function createExecRoutes(ctx, { readBody, send, proofDigest, userMessage = createSessionMessage }) {
+export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
   const records = new Map();
   let active, closed = false;
   const respond = (res, status, data) => {
@@ -267,7 +269,7 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest, userMessage
                 result: { requestId: body.requestId, sessionId: body.sessionId, status: 'running' } };
               records.set(body.requestId, record);
               active = record;
-              record.done = runApprovedSession(ctx, record, body.prompt, userMessage).then(result => {
+              record.done = runApprovedSession(ctx, record, body.prompt).then(result => {
                 Object.assign(record.result, result);
                 record.expiry = setTimeout(() => records.set(body.requestId, null), RESULT_TTL);
                 record.expiry.unref();
