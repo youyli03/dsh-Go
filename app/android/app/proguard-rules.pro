@@ -29,3 +29,13 @@
 
 # JSch selects cryptography and authentication implementations by class name.
 -keep class com.jcraft.jsch.** { *; }
+
+# JSch's optional desktop integrations are not used by RemoteControlService:
+# it uses public-key authentication, TCP sockets and JSch's default logger.
+# Keep the implementations loaded by class name above; only suppress missing
+# dependencies of Pageant, Kerberos, junixsocket and external logger adapters.
+-dontwarn com.sun.jna.**
+-dontwarn org.ietf.jgss.**
+-dontwarn org.newsclub.net.unix.**
+-dontwarn org.apache.logging.log4j.**
+-dontwarn org.slf4j.**
