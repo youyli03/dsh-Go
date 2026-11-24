@@ -14,12 +14,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
+import android.util.Log
 import android.provider.Settings
 import io.github.ccch1mneyyy.dsh_app.MainActivity
 import io.github.ccch1mneyyy.dsh_app.R
 import io.github.ccch1mneyyy.dsh_app.i18n.AppStrings
 import io.github.ccch1mneyyy.dsh_app.pet.PetOverlay
 import io.github.ccch1mneyyy.dsh_app.phone.PhoneControl
+import io.github.ccch1mneyyy.dsh_app.phone.PromptKind
 import io.github.ccch1mneyyy.dsh_app.runtime.DshService
 import io.github.ccch1mneyyy.dsh_app.theme.ThemeAccent
 
@@ -67,6 +69,7 @@ object LiveActivity {
 
     // Live thread only.
     private var shown: LiveContent? = null
+    private var shownWithXiaomiFocus = false
     /** Unknown at start: a post of an earlier process may still be up. */
     private var posted = true
     private var postedAt = 0L
@@ -129,6 +132,7 @@ object LiveActivity {
         val page = Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA &&
             settingsIntent(ctx).resolveActivity(ctx.packageManager) != null
         val xiaomi = XiaomiFocus.allowed(ctx)
+        refresh(ctx)
         return mapOf(
             "supported" to (canPost || page || xiaomi),
             "allowed" to (canPost || xiaomi),
@@ -154,11 +158,24 @@ object LiveActivity {
 
     private fun apply() {
         val ctx = app ?: return
-        val content = if (enabled(ctx) && (canPromote(ctx) || XiaomiFocus.allowed(ctx))) {
+        val enabled = enabled(ctx)
+        val xiaomi = enabled && XiaomiFocus.cachedAllowed(ctx) { refresh(ctx) }
+        val content = if (enabled && (canPromote(ctx) || xiaomi)) {
             val phone = phoneContent(ctx)
+            val waiting = PhoneControl.peek()?.prompts?.waitingKind()?.let { kind ->
+                AppStrings.get(ctx, if (kind == PromptKind.HANDOFF) R.string.live_remote_handoff else R.string.live_remote_round)
+            }
             val operation = io.github.ccch1mneyyy.dsh_app.remote.RemoteControlState.liveOperation()
             val label = operation?.let { AppStrings.get(ctx, it.label) }
             when {
+                phone != null && waiting != null -> phone.copy(
+                    text = waiting, chip = waiting.take(LiveContent.CHIP_MAX), sinceMs = null, mood = "notification",
+                )
+                waiting != null -> LiveContent(
+                    kind = LiveContent.Kind.WAITING,
+                    title = AppStrings.get(ctx, R.string.phone_running),
+                    text = waiting, chip = waiting.take(LiveContent.CHIP_MAX), publicText = waiting, mood = "notification",
+                )
                 label == null -> LiveContent.pick(phone, agent)
                 phone != null -> if (phone.chip == AppStrings.get(ctx, R.string.live_chip_paused)) phone
                     else phone.copy(text = label, chip = label.take(LiveContent.CHIP_MAX))
@@ -183,10 +200,14 @@ object LiveActivity {
             shown = null
             return
         }
-        if (content == shown) return
-        runCatching { post(ctx, content) }.onFailure { return }
+        if (content == shown && xiaomi == shownWithXiaomiFocus) return
+        runCatching { post(ctx, content, xiaomi) }.onFailure {
+            Log.w("DshLive", "Live notification post failed: ${it.javaClass.simpleName}")
+            return
+        }
         posted = true
         shown = content
+        shownWithXiaomiFocus = xiaomi
         postedAt = SystemClock.elapsedRealtime()
         handler.removeCallbacks(repost)
         if (!content.ending) handler.postDelayed(repost, REFRESH_MS)
@@ -212,7 +233,7 @@ object LiveActivity {
         )
     }
 
-    private fun post(ctx: Context, c: LiveContent) {
+    private fun post(ctx: Context, c: LiveContent, xiaomi: Boolean) {
         val nm = nm(ctx)
         ensureChannel(ctx, nm)
         val color = ThemeAccent.notificationColor(ctx)
@@ -256,9 +277,15 @@ object LiveActivity {
             )
             builder.addAction(Notification.Action.Builder(null, AppStrings.get(ctx, R.string.service_stop_phone), stop).build())
         }
-        val icon = picture?.let(Icon::createWithBitmap) ?: Icon.createWithResource(ctx, R.mipmap.ic_launcher)
-        XiaomiFocus.apply(ctx, builder, c, icon)
-        nm.notify(ID, builder.build())
+        if (xiaomi) {
+            val icon = picture?.let(Icon::createWithBitmap) ?: Icon.createWithResource(ctx, R.mipmap.ic_launcher)
+            XiaomiFocus.apply(builder, c, icon)
+        }
+        val notification = builder.build()
+        val started = SystemClock.elapsedRealtime()
+        Log.d("DshLive", "Live notification publish started: xiaomi=$xiaomi")
+        nm.notify(ID, notification)
+        Log.d("DshLive", "Live notification publish finished: elapsedMs=${SystemClock.elapsedRealtime() - started}")
     }
 
     /** The lock screen's version when it hides sensitive content: no title, no line. */

@@ -8,8 +8,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import io.github.ccch1mneyyy.dsh_app.phone.Json
 import io.github.ccch1mneyyy.dsh_app.runtime.VendorSettings
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * HyperOS 焦点通知 / 超级岛: the live activity's notification with a `miui.focus.param` template
@@ -21,6 +24,7 @@ import io.github.ccch1mneyyy.dsh_app.runtime.VendorSettings
  * island ([LiveActivity]), which needs none of this.
  */
 object XiaomiFocus {
+    private const val TAG = "DshLive"
     const val EXTRA_PARAM = "miui.focus.param"
     const val EXTRA_PICS = "miui.focus.pics"
     const val PIC_ICON = "miui.focus.pic_icon"
@@ -36,6 +40,12 @@ object XiaomiFocus {
     private const val ISLAND_CHARS = 6
 
     @Volatile private var checked: Pair<Long, Boolean>? = null
+    private val checkLock = Any()
+    private val checkPending = AtomicBoolean()
+    private val checkWorker = Executors.newSingleThreadExecutor { Thread(it, "dsh-xiaomi-focus") }
+    private val isXiaomi by lazy {
+        VendorSettings.vendorOf(Build.MANUFACTURER, Build.BRAND) == VendorSettings.XIAOMI
+    }
 
     /**
      * The template for [c]: the pet (or the app icon) and the chip's word in the island, the title
@@ -78,9 +88,8 @@ object XiaomiFocus {
         )
     }
 
-    /** Adds the focus template to [builder] when SystemUI takes it from this app. Call off the main thread. */
-    fun apply(context: Context, builder: Notification.Builder, c: LiveContent, picture: Icon) {
-        if (!allowed(context)) return
+    /** Adds the focus template after permission has been checked. */
+    fun apply(builder: Notification.Builder, c: LiveContent, picture: Icon) {
         builder.addExtras(
             Bundle().apply {
                 putString(EXTRA_PARAM, param(c))
@@ -89,26 +98,52 @@ object XiaomiFocus {
         )
     }
 
+    /** The notification worker uses the last result while a single refresh runs separately. */
+    fun cachedAllowed(context: Context, onChecked: () -> Unit): Boolean {
+        if (!isXiaomi) return false
+        val previous = checked
+        if (freshResult() == null && checkPending.compareAndSet(false, true)) {
+            checkWorker.execute {
+                try {
+                    allowed(context)
+                } finally {
+                    checkPending.set(false)
+                }
+                onChecked()
+            }
+        }
+        return previous?.second == true
+    }
+
+    private fun freshResult(): Boolean? =
+        checked?.takeIf { SystemClock.elapsedRealtime() - it.first < CHECK_TTL_MS }?.second
+
     /**
      * SystemUI shows this app's focus notifications. A binder call into SystemUI, cached for a
      * minute: call off the main thread.
      */
     fun allowed(context: Context): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        checked?.let { (at, ok) -> if (now - at < CHECK_TTL_MS) return ok }
-        val ok = protocol(context) >= 1 && canShowFocus(context)
-        checked = now to ok
-        return ok
+        if (!isXiaomi) return false
+        return synchronized(checkLock) {
+            freshResult()?.let { return@synchronized it }
+            val started = SystemClock.elapsedRealtime()
+            Log.d(TAG, "Xiaomi focus permission check started")
+            val ok = protocol(context) >= 1 && canShowFocus(context)
+            val finished = SystemClock.elapsedRealtime()
+            checked = finished to ok
+            Log.d(TAG, "Xiaomi focus permission check finished: allowed=$ok elapsedMs=${finished - started}")
+            ok
+        }
     }
 
     /** 1: HyperOS 1, 2: HyperOS 2, 3: HyperOS 3 (超级岛); 0 elsewhere. */
     fun protocol(context: Context): Int {
-        if (VendorSettings.vendorOf(Build.MANUFACTURER, Build.BRAND) != VendorSettings.XIAOMI) return 0
+        if (!isXiaomi) return 0
         return runCatching { Settings.System.getInt(context.contentResolver, PROTOCOL_SETTING, 0) }.getOrDefault(0)
     }
 
     private fun canShowFocus(context: Context): Boolean = runCatching {
         val extras = Bundle().apply { putString("package", context.packageName) }
         context.contentResolver.call(Uri.parse(PROVIDER), "canShowFocus", null, extras)?.getBoolean("canShowFocus", false) == true
-    }.getOrDefault(false)
+    }.onFailure { Log.w(TAG, "Xiaomi focus permission check failed: ${it.javaClass.simpleName}") }.getOrDefault(false)
 }

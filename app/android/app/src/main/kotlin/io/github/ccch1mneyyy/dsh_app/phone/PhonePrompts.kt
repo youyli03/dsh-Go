@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import io.github.ccch1mneyyy.dsh_app.MainActivity
+import io.github.ccch1mneyyy.dsh_app.notify.LiveActivity
 
 /** One asynchronous UI coordinator for native SafetyGate and structured engine requests. */
 class PhonePrompts(
@@ -65,6 +66,7 @@ class PhonePrompts(
     fun detachOwner(owner: Any) { arbiter.cancelOwner(owner); attachActivity(owner, null) }
     fun stopAll() = arbiter.stopAll()
     fun check() = arbiter.check()
+    internal fun waitingKind(): PromptKind? = arbiter.current()?.content?.kind
 
     override fun confirm(request: ConfirmRequest): Decision = confirmFor(tasks, null, request)
 
@@ -163,11 +165,17 @@ class PhonePrompts(
             onMain {
                 main.removeCallbacks(tick)
                 if (display?.first === ticket) clearDisplay()
+                LiveActivity.refresh(app)
             }
         }
         onMain {
             if (!ticket.live) return@onMain
             tick.run()
+            LiveActivity.refresh(app)
+            val host = activity
+            if (host != null && appResumed() &&
+                ticket.content.kind in setOf(PromptKind.NATIVE_CONFIRM, PromptKind.HANDOFF) &&
+                show(ticket, PromptSurface.APP) { PhonePromptUi.showDialog(host, it) }) return@onMain
             val overlay = PhoneRegistry.overlayGate as? PhonePromptPresenter
             if (overlay != null && show(ticket, PromptSurface.OVERLAY, overlay::showPrompt)) return@onMain
             if (show(ticket, PromptSurface.NOTIFICATION, notifications::showPrompt)) return@onMain

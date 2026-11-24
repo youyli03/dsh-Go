@@ -12,5 +12,6 @@
     <string name="live_remote_input">输入文字</string>
     <string name="live_remote_scroll">滚动屏幕</string>
     <string name="live_remote_round">等待确认</string>
+    <string name="live_remote_handoff">等待接管</string>
     <string name="live_remote_tool">调用工具</string>
 </resources>

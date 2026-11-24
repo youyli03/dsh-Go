@@ -12,5 +12,6 @@
     <string name="live_remote_input">Enter text</string>
     <string name="live_remote_scroll">Scroll</string>
     <string name="live_remote_round">Await approval</string>
+    <string name="live_remote_handoff">Await takeover</string>
     <string name="live_remote_tool">Run tool</string>
 </resources>
