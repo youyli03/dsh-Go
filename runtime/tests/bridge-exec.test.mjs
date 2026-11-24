@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, request } from 'node:http';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
 import { setImmediate, setTimeout as delay } from 'node:timers/promises';
 import { createExecRoutes } from '../bridge/dsh-go-bridge/lib/exec.js';
 
@@ -13,14 +16,15 @@ const finish = { type: 'finish', reason: { kind: 'stop' } };
 const selection = { provider: 'locked', model: 'model' };
 
 function fixture(t, options = {}) {
-  const events = [], inputs = [], ids = [];
+  const events = [], inputs = [], ids = [], workdirs = [];
   let attached = false, signal;
   let open;
   const gate = new Promise(resolve => { open = resolve; });
   const services = {
     sessions: {
-      prepare(id) {
+      prepare(id, { meta }) {
         ids.push(id);
+        workdirs.push(meta.cwd);
         return { id, append(type, data) { assert.equal(attached, true); events.push({ type, data }); } };
       },
       enter(session) { assert.equal(session.id, ids.at(-1)); attached = true; return () => { attached = false; }; },
@@ -46,6 +50,7 @@ function fixture(t, options = {}) {
       },
     },
   };
+  if (options.workspaceRegistry) services.workspaceRegistry = options.workspaceRegistry;
   if (options.agent) {
     services.agents = { get: id => id === options.agent.session.id ? options.agent : undefined };
     services.sessions.flush = async () => options.flush !== false;
@@ -56,6 +61,7 @@ function fixture(t, options = {}) {
     return services[name];
   } }, {
     proofDigest: digest,
+    workspaceRoot: options.workspaceRoot,
     readBody: async req => Buffer.from(JSON.stringify(req.body)),
     send: (res, status, data) => {
       if (typeof res.writeHead === 'function') {
@@ -85,8 +91,41 @@ function fixture(t, options = {}) {
     }
     assert.fail('exec never settled');
   }
-  return { routes, events, inputs, ids, call, waitTerminal, open, loss: () => signal.aborted };
+  return { routes, events, inputs, ids, workdirs, call, waitTerminal, open, loss: () => signal.aborted };
 }
+
+test('workspace preparation reuses the dedicated directory and groups text-only transcripts', async t => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'dsh-exec-workspace-'));
+  t.after(() => rm(workspaceRoot, { recursive: true, force: true }));
+  const attached = [];
+  const workspace = { id: 'remote-workspace', path: null, async attachSession(id) { attached.push(id); } };
+  const f = fixture(t, {
+    workspaceRoot,
+    workspaceRegistry: {
+      async create(path, title) {
+        assert.equal(basename(path), 'dsh-exec');
+        assert.equal(title, 'DSH 远控');
+        if (workspace.path !== null) assert.equal(workspace.path, path);
+        workspace.path = path;
+        return workspace;
+      },
+      get(id) { return id === workspace.id ? workspace : undefined; },
+    },
+  });
+  for (let i = 0; i < 2; i++) {
+    const { status, data } = await f.call('/workspace', {});
+    assert.equal(status, 200);
+    assert.deepEqual(data, { workspaceId: workspace.id });
+    const requestId = randomUUID();
+    const start = await f.call('', { requestId, workspaceId: data.workspaceId, prompt: 'hello' });
+    assert.equal(start.status, 202);
+    assert.equal((await f.waitTerminal(requestId)).status, 'succeeded');
+    assert.equal(attached.at(-1), start.data.sessionId);
+  }
+  assert.deepEqual(f.workdirs, [workspace.path, workspace.path]);
+  assert.equal(new Set(attached).size, 2);
+  assert.equal((await f.call('', { requestId: randomUUID(), workspaceId: 'other', prompt: 'text' })).status, 400);
+});
 
 function normalAgent({ approval = 'ask', hold = false, extraUser = false, reason = 'completed' } = {}) {
   const events = [];
@@ -202,7 +241,7 @@ test('exec requires launch enablement, loopback and distinct proof for every rou
   const on = fixture(t);
   const requestId = randomUUID();
   assert.equal((await off.call('', { requestId, prompt: 'text' })).handled, false);
-  for (const suffix of ['', '/status', '/cancel']) {
+  for (const suffix of ['', '/status', '/cancel', '/workspace']) {
     assert.equal((await on.call(suffix, { requestId }, { socket: { remoteAddress: '192.0.2.1' } })).status, 403);
     assert.equal((await on.call(suffix, { requestId }, { headers: { authorization: `Bearer ${proof}` } })).status, 403);
   }

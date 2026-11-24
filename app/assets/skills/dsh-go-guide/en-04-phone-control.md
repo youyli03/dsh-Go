@@ -21,6 +21,8 @@ When no phone call is running and the task is unpaused, about three minutes with
 
 With dsh_exec enabled, an external agent can send one prompt and receive the final text and conversation ID. By default it only calls the model. To use tools, turn on **Allow tools in DSH sessions** on the Remote control page and save. Each call starts a new session with workspace write access and uses the session's confirmation rules when extra access is needed. Phone tools retain their own authorization and stop rules.
 
+Both modes put new conversations in the DSH 远控 workspace, created on the first call. Tool-enabled conversations use that workspace's `dsh-exec` directory.
+
 ## iPhone / iOS
 
 <!-- nav: commonSettings,hubSettingsPhoneControl -->

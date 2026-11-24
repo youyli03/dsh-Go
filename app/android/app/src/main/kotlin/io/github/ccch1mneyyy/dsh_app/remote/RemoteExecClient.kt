@@ -42,12 +42,19 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
         }
         try {
             if (stopped.get() || !policy.allowed(call) || !RemoteControlState.authenticates(credential)) return fail("cancelled")
+            val workspaceId = try {
+                (post(origin, "/workspace", emptyMap())["workspaceId"] as? String)?.takeIf(String::isNotBlank)
+            } catch (_: Exception) { null }
+            if (stopped.get() || !policy.allowed(call)) return fail("cancelled")
+            if (workspaceId == null) return fail("workspace_unavailable")
             val request = mutableMapOf("requestId" to requestId, "prompt" to prompt)
             if (sessionMode) {
                 val sessionId = "dsh-go-exec-${UUID.randomUUID()}"
-                if (!createSession(origin, sessionId)) return fail("session_create_failed")
+                if (!createSession(origin, sessionId, workspaceId)) return fail("session_create_failed")
                 if (stopped.get() || !policy.allowed(call)) return fail("cancelled")
                 request["sessionId"] = sessionId
+            } else {
+                request["workspaceId"] = workspaceId
             }
             var result = post(origin, "", request)
             val until = SystemClock.elapsedRealtime() + 310_000L
@@ -76,11 +83,11 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
         }
     }
 
-    private fun createSession(origin: RuntimeController.RemoteExecOrigin, sessionId: String): Boolean {
+    private fun createSession(origin: RuntimeController.RemoteExecOrigin, sessionId: String, workspaceId: String): Boolean {
         val method = "session/create"
         val rpcId = UUID.randomUUID().toString()
         val envelope = mapOf("type" to "client-request", "method" to method, "rpcId" to rpcId,
-            "payload" to mapOf("args" to mapOf("request" to mapOf("sessionId" to sessionId))))
+            "payload" to mapOf("args" to mapOf("request" to mapOf("sessionId" to sessionId, "workspaceId" to workspaceId))))
         val response = post(origin, "/api/$method", envelope, engineRpc = true)
         val result = response["result"] as? Map<*, *> ?: return false
         return response["rpcId"] == rpcId && result["ok"] == true &&

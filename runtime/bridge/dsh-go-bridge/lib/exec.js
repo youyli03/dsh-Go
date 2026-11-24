@@ -1,7 +1,11 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { mkdir, realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const PATH = '/dsh-go/v1/exec';
+const WORKSPACE_PATH = PATH + '/workspace';
 const HEADER = 'x-dsh-go-exec-proof';
 const HEX = /^[0-9a-f]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -182,9 +186,23 @@ export function takeExecLaunchProof() {
   return proof;
 }
 
-export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
+export function createExecRoutes(ctx, { readBody, send, proofDigest, workspaceRoot = join(homedir(), 'workspace') }) {
   const records = new Map();
   let active, closed = false;
+  let execWorkspaceId;
+  async function ensureWorkspace() {
+    const registry = ctx.get('workspaceRegistry');
+    if (typeof registry?.create !== 'function') throw new Error('Workspace registry unavailable');
+    await mkdir(workspaceRoot, { recursive: true });
+    const directory = join(await realpath(workspaceRoot), 'dsh-exec');
+    await mkdir(directory, { recursive: true });
+    if (await realpath(directory) !== directory) throw new Error('Remote workspace directory moved');
+    const workspace = await registry.create(directory, 'DSH 远控');
+    if (typeof workspace?.id !== 'string' || workspace.path !== directory ||
+        typeof workspace.attachSession !== 'function') throw new Error('Remote workspace unavailable');
+    execWorkspaceId = workspace.id;
+    return workspace.id;
+  }
   const respond = (res, status, data) => {
     if (!res.destroyed) {
       res.setHeader('Cache-Control', 'no-store');
@@ -192,7 +210,7 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
     }
   };
   const reject = (res, status, code) => respond(res, status, { error: { code, message: code } });
-  async function execute(record, sessions, session, llm, selection, prompt) {
+  async function execute(record, sessions, session, llm, selection, prompt, workspace) {
     const explicitSignal = record.abort.signal;
     const signal = AbortSignal.any([explicitSignal, AbortSignal.timeout(5 * 60_000)]);
     let text = '', bytes = 0, finish;
@@ -231,6 +249,10 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
       } catch {
         result = { status: 'failed', errorCode: 'session-persistence-failed' };
       }
+      if (workspace && result.errorCode !== 'session-persistence-failed') {
+        try { await workspace.attachSession(record.result.sessionId); }
+        catch { result = { status: 'failed', errorCode: 'workspace-attach-failed' }; }
+      }
     }
     Object.assign(record.result, result);
     const expiry = setTimeout(() => records.set(record.result.requestId, null), RESULT_TTL);
@@ -239,7 +261,7 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
   }
   return {
     async handle(req, res, path) {
-      if (path !== PATH && path !== `${PATH}/status` && path !== `${PATH}/cancel`) return false;
+      if (path !== PATH && path !== WORKSPACE_PATH && path !== `${PATH}/status` && path !== `${PATH}/cancel`) return false;
       if (closed || !proofDigest) return false;
       const presented = req.headers[HEADER];
       if (!LOOPBACK.has(req.socket.remoteAddress) || typeof presented !== 'string' || !HEX.test(presented) ||
@@ -259,9 +281,22 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
         // If the incoming body was lost before admission there is nothing to
         // detach. Once admitted, only explicit cancellation owns its signal.
         if (res.destroyed) return true;
+        if (path === WORKSPACE_PATH) {
+          if (closed) reject(res, 503, 'exec-unavailable');
+          else if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 0)
+            reject(res, 400, 'bad-request');
+          else {
+            try { respond(res, 200, { workspaceId: await ensureWorkspace() }); }
+            catch { reject(res, 503, 'workspace-unavailable'); }
+          }
+          return true;
+        }
         const start = path === PATH;
         if (!body || !UUID.test(typeof body.requestId === 'string' ? body.requestId : '') ||
-            Object.keys(body).some(key => key !== 'requestId' && !(start && (key === 'prompt' || key === 'sessionId'))) ||
+            Object.keys(body).some(key => key !== 'requestId' &&
+              !(start && (key === 'prompt' || key === 'sessionId' || key === 'workspaceId'))) ||
+            start && body.workspaceId !== undefined &&
+              (typeof body.workspaceId !== 'string' || body.workspaceId !== execWorkspaceId || body.sessionId !== undefined) ||
             start && body.sessionId !== undefined &&
               (typeof body.sessionId !== 'string' || !body.sessionId.startsWith('dsh-go-exec-') ||
                 !UUID.test(body.sessionId.slice('dsh-go-exec-'.length))) ||
@@ -318,12 +353,17 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest }) {
               reject(res, 503, 'exec-unavailable');
               return true;
             }
+            const workspace = body.workspaceId === undefined ? undefined : ctx.get('workspaceRegistry')?.get(body.workspaceId);
+            if (body.workspaceId !== undefined && !workspace) {
+              reject(res, 503, 'workspace-unavailable');
+              return true;
+            }
             const sessionId = `dsh-go-exec-${randomUUID()}`;
-            const session = sessions.prepare(sessionId, { meta: { cwd: process.cwd() } });
+            const session = sessions.prepare(sessionId, { meta: { cwd: workspace?.path ?? process.cwd() } });
             const record = { abort: new AbortController(), result: { requestId: body.requestId, sessionId, status: 'running' } };
             records.set(body.requestId, record);
             active = record;
-            record.done = execute(record, sessions, session, llm, { provider: selection.provider, model: selection.model }, body.prompt)
+            record.done = execute(record, sessions, session, llm, { provider: selection.provider, model: selection.model }, body.prompt, workspace)
               .finally(() => { active = undefined; });
             respond(res, 202, record.result);
           } catch {
