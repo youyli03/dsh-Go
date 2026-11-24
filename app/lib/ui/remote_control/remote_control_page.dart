@@ -273,14 +273,17 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
             if (!_unavailable)
               SettingsTile(
                 title: active ? l10n.rcStop : l10n.rcStart,
+                chevron: false,
                 onTap: disabled || (!active && (!hasToken || status['hasPrivateKey'] != true))
                     ? null
                     : () => unawaited(_act(active ? 'stop' : 'start')),
               ),
-            if (url != null) SettingsTile(title: l10n.rcCopyUrl, subtitle: url, onTap: () => unawaited(_copy(url))),
+            if (url != null)
+              SettingsTile(title: l10n.rcCopyUrl, subtitle: url, chevron: false, onTap: () => unawaited(_copy(url))),
             if (!_unavailable)
               SettingsTile(
                 title: hasToken ? l10n.rcRotateToken : l10n.rcCreateToken,
+                chevron: false,
                 onTap: disabled ? null : () => unawaited(_rotateToken(hasToken)),
               ),
           ],
@@ -315,6 +318,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
               ),
               SettingsTile(
                 title: l10n.rcPasteKey,
+                chevron: false,
                 subtitle: _privateKey.text.isNotEmpty
                     ? l10n.rcKeyStaged
                     : status['hasPrivateKey'] == true
@@ -346,7 +350,11 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
                 value: _autoReconnect,
                 onChanged: disabled || active ? null : (value) => setState(() => _autoReconnect = value),
               ),
-              SettingsTile(title: l10n.rcSave, onTap: disabled || active ? null : () => unawaited(_save())),
+              SettingsTile(
+                title: l10n.rcSave,
+                chevron: false,
+                onTap: disabled || active ? null : () => unawaited(_save()),
+              ),
             ],
           ),
       ],
