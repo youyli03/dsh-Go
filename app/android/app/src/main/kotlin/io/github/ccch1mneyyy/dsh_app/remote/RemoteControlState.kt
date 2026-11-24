@@ -44,8 +44,6 @@ internal object RemoteControlState {
         private set
     @Volatile private var currentPolicy: RemoteControlPolicy? = null
 
-    fun liveOperation(): RemoteLiveOperation? = currentPolicy?.liveOperation()
-
     @Synchronized fun policy(context: Context): RemoteControlPolicy = currentPolicy ?: RemoteControlPolicy(
         context.applicationContext,
     ).also {

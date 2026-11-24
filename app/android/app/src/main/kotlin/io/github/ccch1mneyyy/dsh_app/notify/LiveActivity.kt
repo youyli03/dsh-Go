@@ -65,6 +65,7 @@ object LiveActivity {
 
     @Volatile private var app: Context? = null
     @Volatile private var agent: LiveContent? = null
+    @Volatile private var remoteToolLabel: Int? = null
     @Volatile private var packId: String? = null
 
     // Live thread only.
@@ -111,6 +112,11 @@ object LiveActivity {
             shown = null
             refresh(ctx)
         }
+    }
+
+    internal fun updateRemoteTool(context: Context, label: Int?) {
+        remoteToolLabel = label
+        refresh(context)
     }
 
     /** Something it shows changed: post the latest within [MIN_GAP_MS] of the last post. Any thread. */
@@ -165,8 +171,7 @@ object LiveActivity {
             val waiting = PhoneControl.peek()?.prompts?.waitingKind()?.let { kind ->
                 AppStrings.get(ctx, if (kind == PromptKind.HANDOFF) R.string.live_remote_handoff else R.string.live_remote_round)
             }
-            val operation = io.github.ccch1mneyyy.dsh_app.remote.RemoteControlState.liveOperation()
-            val label = operation?.let { AppStrings.get(ctx, it.label) }
+            val label = remoteToolLabel?.let { AppStrings.get(ctx, it) }
             when {
                 phone != null && waiting != null -> phone.copy(
                     text = waiting, chip = waiting.take(LiveContent.CHIP_MAX), sinceMs = null, mood = "notification",

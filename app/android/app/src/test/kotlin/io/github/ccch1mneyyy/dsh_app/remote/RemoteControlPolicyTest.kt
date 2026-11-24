@@ -5,18 +5,19 @@ import org.junit.Test
 
 class RemoteControlPolicyTest {
     @Test fun liveOperationFollowsActiveCallsAndCannotBeRestoredAfterCancellation() {
-        val policy = RemoteControlPolicy { false }
+        val published = mutableListOf<RemoteLiveOperation?>()
+        val policy = RemoteControlPolicy(activityChanged = { published.add(it) }) { false }
         val exec = checkNotNull(policy.admit("dsh_exec", false) {})
-        assertEquals(RemoteLiveOperation.EXEC, policy.liveOperation())
         policy.updateLiveOperation(exec, RemoteLiveOperation.SHELL)
-        assertEquals(RemoteLiveOperation.SHELL, policy.liveOperation())
         val phone = checkNotNull(policy.admit("screen", true) {})
-        assertEquals(RemoteLiveOperation.SCREEN, policy.liveOperation())
         policy.finish(phone)
-        assertEquals(RemoteLiveOperation.SHELL, policy.liveOperation())
         policy.revoke()
         policy.updateLiveOperation(exec, RemoteLiveOperation.READ)
-        assertNull(policy.liveOperation())
+        assertEquals(
+            listOf(RemoteLiveOperation.EXEC, RemoteLiveOperation.SHELL, RemoteLiveOperation.SCREEN,
+                RemoteLiveOperation.SHELL, null),
+            published,
+        )
     }
 
     @Test fun lockedPhoneCancelsOnlyPhoneCallsThenRevocationCancelsExec() {
