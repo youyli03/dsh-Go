@@ -2,7 +2,7 @@
 # be tried on a real phone without a local Android toolchain:
 #
 #   Actions > Test APK > Run workflow   (or push a change to this file)
-#   then download the `dsh-go-test-apk` artifact of that run.
+#   then download `dsh-go-test-arm64.apk` directly from that run.
 #
 # Uses the official package name and the fork owner's fixed signing key.
 # Uninstall an official-signed installation before switching to this fork.
@@ -133,18 +133,18 @@ jobs:
             -file "$RUNNER_TEMP/dsh-go-fork.der"
           expected="$(sha256sum "$RUNNER_TEMP/dsh-go-fork.der" | cut -d ' ' -f 1)"
           apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
-          for apk in app/build/app/outputs/flutter-apk/*.apk; do
-            "$apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/apk-cert.txt"
-            # Build Tools 36 uses "Signer #1"; 37 uses "V3.0 Signer:".
-            # All reported signing certificates must match the fixed fork key.
-            actual="$(sed -nE 's/^(Signer #[0-9]+|V[0-9.]+ Signer:) certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\2/p' "$RUNNER_TEMP/apk-cert.txt" | tr '[:upper:]' '[:lower:]' | sort -u)"
-            [ "$actual" = "$expected" ] || { cat "$RUNNER_TEMP/apk-cert.txt"; echo "APK signing certificate mismatch: expected $expected, got ${actual:-<not found>}" >&2; exit 1; }
-            echo "Verified fork signing certificate: $actual"
-          done
+          apk=app/build/app/outputs/flutter-apk/app-arm64-release.apk
+          "$apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/apk-cert.txt"
+          # Build Tools 36 uses "Signer #1"; 37 uses "V3.0 Signer:".
+          # All reported signing certificates must match the fixed fork key.
+          actual="$(sed -nE 's/^(Signer #[0-9]+|V[0-9.]+ Signer:) certificate SHA-256 digest: ([0-9a-fA-F]{64})$/\2/p' "$RUNNER_TEMP/apk-cert.txt" | tr '[:upper:]' '[:lower:]' | sort -u)"
+          [ "$actual" = "$expected" ] || { cat "$RUNNER_TEMP/apk-cert.txt"; echo "APK signing certificate mismatch: expected $expected, got ${actual:-<not found>}" >&2; exit 1; }
+          echo "Verified fork signing certificate: $actual"
+          cp "$apk" "$RUNNER_TEMP/dsh-go-test-arm64.apk"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dsh-go-test-apk
-          path: app/build/app/outputs/flutter-apk/*.apk
+          path: ${{ runner.temp }}/dsh-go-test-arm64.apk
+          archive: false
           retention-days: 14
           if-no-files-found: error
       - name: Remove signing files from the runner

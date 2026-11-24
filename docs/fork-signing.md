@@ -34,7 +34,7 @@ tooling/build-apk.sh --release -f arm64 --no-companion --no-star
 - `FORK_ANDROID_KEY_PASSWORD`
 
 工作流在临时目录恢复密钥，通过现有 Gradle 签名配置生成 APK，核对 APK
-证书与密钥证书一致后上传 `dsh-go-test-apk`，最后清理 runner 上的签名文件。
+证书与密钥证书一致后直接上传 `dsh-go-test-arm64.apk`，最后清理 runner 上的签名文件。
 缺少 Secrets 会直接失败，不会退回临时 debug 签名。
 
 ## 同步上游
