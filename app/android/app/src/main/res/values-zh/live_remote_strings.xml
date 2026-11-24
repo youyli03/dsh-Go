@@ -1,0 +1,16 @@
+<resources>
+    <string name="live_remote_title">远控正在运行</string>
+    <string name="live_remote_exec">DSH 执行中</string>
+    <string name="live_remote_shell">执行命令</string>
+    <string name="live_remote_read">读取文件</string>
+    <string name="live_remote_write">修改文件</string>
+    <string name="live_remote_search">正在搜索</string>
+    <string name="live_remote_delegate">委托子任务</string>
+    <string name="live_remote_screen">读取屏幕</string>
+    <string name="live_remote_open">打开应用</string>
+    <string name="live_remote_tap">点按操作</string>
+    <string name="live_remote_input">输入文字</string>
+    <string name="live_remote_scroll">滚动屏幕</string>
+    <string name="live_remote_round">等待确认</string>
+    <string name="live_remote_tool">调用工具</string>
+</resources>

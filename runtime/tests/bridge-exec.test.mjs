@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer, request } from 'node:http';
-import { setImmediate } from 'node:timers/promises';
+import { setImmediate, setTimeout as delay } from 'node:timers/promises';
 import { createExecRoutes } from '../bridge/dsh-go-bridge/lib/exec.js';
 
 const path = '/dsh-go/v1/exec';
@@ -109,6 +109,7 @@ function normalAgent({ approval = 'ask', hold = false, extraUser = false, reason
     ctx: { get: name => services[name] },
     get submissions() { return submissions; },
     get cancellations() { return cancellations; },
+    append: (type, data) => events.push({ type, data: { turn: 1, ...data } }),
     followup(message) {
       assert.equal(sandboxMode, 'workspace-write');
       assert.equal(approvalPolicy, 'ask');
@@ -136,6 +137,30 @@ test('session exec submits only after verifying and saving its restricted permis
     { requestId, sessionId: agent.session.id, status: 'succeeded', text: 'session reply' });
   assert.equal(agent.submissions, 1);
   assert.equal(f.inputs.length, 0);
+});
+
+test('session exec reports only the category of the current tool until its result arrives', async t => {
+  const agent = normalAgent({ hold: true });
+  const f = fixture(t, { agent });
+  const requestId = randomUUID();
+  const sessionId = agent.session.id;
+  async function activity(expected) {
+    for (let i = 0; i < 30; i++) {
+      const { data } = await f.call('/status', { requestId });
+      assert.equal(JSON.stringify(data).includes('private-argument'), false);
+      if (data.activeTool === expected) return;
+      await delay(20);
+    }
+    assert.fail(`active tool never became ${expected}`);
+  }
+  await f.call('', { requestId, sessionId, prompt: 'Use a tool' });
+  agent.append('tool/call', { callId: 'shell-call', name: 'bash', arguments: 'private-argument' });
+  agent.append('tool/call', { callId: 'screen-call', name: 'mcp__phone__screen' });
+  await activity('shell');
+  agent.append('tool/result', { message: { toolCallId: 'shell-call' } });
+  await activity('screen');
+  agent.append('tool/result', { message: { toolCallId: 'screen-call' } });
+  await activity(undefined);
 });
 
 test('session exec withholds mixed-user replies and reports genuine turn failures separately', async t => {

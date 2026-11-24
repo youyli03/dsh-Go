@@ -4,6 +4,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RemoteControlPolicyTest {
+    @Test fun liveOperationFollowsActiveCallsAndCannotBeRestoredAfterCancellation() {
+        val policy = RemoteControlPolicy { false }
+        val exec = checkNotNull(policy.admit("dsh_exec", false) {})
+        assertEquals(RemoteLiveOperation.EXEC, policy.liveOperation())
+        policy.updateLiveOperation(exec, RemoteLiveOperation.SHELL)
+        assertEquals(RemoteLiveOperation.SHELL, policy.liveOperation())
+        val phone = checkNotNull(policy.admit("screen", true) {})
+        assertEquals(RemoteLiveOperation.SCREEN, policy.liveOperation())
+        policy.finish(phone)
+        assertEquals(RemoteLiveOperation.SHELL, policy.liveOperation())
+        policy.revoke()
+        policy.updateLiveOperation(exec, RemoteLiveOperation.READ)
+        assertNull(policy.liveOperation())
+    }
+
     @Test fun lockedPhoneCancelsOnlyPhoneCallsThenRevocationCancelsExec() {
         var locked = false
         var phoneCancels = 0

@@ -13,6 +13,22 @@ const MAX_REQUESTS = 4096;
 const RESULT_TTL = 10 * 60_000;
 const SYSTEM = 'Respond to the prompt in text. No tools are available.';
 
+function toolActivity(name) {
+  switch (name) {
+    case 'bash': case 'pwsh': case 'shell': case 'mcp__phone__android_shell': return 'shell';
+    case 'read': case 'read_file': return 'read';
+    case 'write': case 'write_file': case 'edit': case 'edit_file': case 'str_replace_editor': return 'write';
+    case 'glob': case 'grep': case 'web_search': return 'search';
+    case 'delegate': case 'spawn_agent': return 'delegate';
+    case 'mcp__phone__screen': case 'mcp__phone__collect': return 'screen';
+    case 'mcp__phone__open': return 'open';
+    case 'mcp__phone__tap': case 'mcp__phone__tap_xy': return 'tap';
+    case 'mcp__phone__type': return 'input';
+    case 'mcp__phone__scroll': return 'scroll';
+    default: return 'tool';
+  }
+}
+
 // Native Android launch opt-in; Linux is reported both under PRoot and direct
 // launch. Do not pass the secret to subsequent child processes. This is not
 // protection against untrusted code that can inspect the engine process itself.
@@ -71,6 +87,7 @@ async function runApprovedSession(ctx, record, prompt) {
         !blank())
       return { status: 'failed', errorCode: 'session-permission-unavailable' };
     let cursor = session.seq, turn, ours = false, other = false, text = '';
+    const activeTools = new Map();
     signal.addEventListener('abort', cancel, { once: true });
     started = true;
     agent.followup({
@@ -87,11 +104,16 @@ async function runApprovedSession(ctx, record, prompt) {
           if (data.source?.rpcId === requestId) ours = true;
           else other = true;
         }
+        if (ours && !other && data.turn === turn) {
+          if (type === 'tool/call') activeTools.set(data.callId, toolActivity(data.name));
+          if (type === 'tool/result') activeTools.delete(data.message?.toolCallId);
+        }
         if (type === 'assistant/message' && ours && !other && data.turn === turn) {
           const reply = data.message?.content?.filter(part => part.type === 'text').map(part => part.text).join('');
           text = reply && Buffer.byteLength(reply) <= MAX_TEXT ? reply : '';
         }
         if (type === 'turn/end' && ours && data.turn === turn) {
+          delete record.result.activeTool;
           signal.removeEventListener('abort', cancel);
           record.finalizing = true;
           if (await sessions.flush(session) !== true)
@@ -106,6 +128,9 @@ async function runApprovedSession(ctx, record, prompt) {
         }
         if (type === 'turn/end') { ours = false; other = false; text = ''; }
       }
+      const activeTool = ours && !other ? activeTools.values().next().value : undefined;
+      if (activeTool === undefined) delete record.result.activeTool;
+      else record.result.activeTool = activeTool;
       await delay(150, undefined, { signal });
     }
     return { status: 'failed', errorCode: 'session-unavailable' };
@@ -115,6 +140,7 @@ async function runApprovedSession(ctx, record, prompt) {
     return localStop.aborted ? { status: 'cancelled' } :
       { status: 'failed', errorCode: signal.aborted ? 'model-timeout' : 'session-exec-failed' };
   } finally {
+    delete record.result.activeTool;
     signal.removeEventListener('abort', cancel);
   }
 }

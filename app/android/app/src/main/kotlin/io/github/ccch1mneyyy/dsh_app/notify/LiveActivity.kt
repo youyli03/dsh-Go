@@ -155,7 +155,24 @@ object LiveActivity {
     private fun apply() {
         val ctx = app ?: return
         val content = if (enabled(ctx) && (canPromote(ctx) || XiaomiFocus.allowed(ctx))) {
-            LiveContent.pick(phoneContent(ctx), agent)
+            val phone = phoneContent(ctx)
+            val operation = io.github.ccch1mneyyy.dsh_app.remote.RemoteControlState.liveOperation()
+            val label = operation?.let { AppStrings.get(ctx, it.label) }
+            when {
+                label == null -> LiveContent.pick(phone, agent)
+                phone != null -> if (phone.chip == AppStrings.get(ctx, R.string.live_chip_paused)) phone
+                    else phone.copy(text = label, chip = label.take(LiveContent.CHIP_MAX))
+                agent?.kind == LiveContent.Kind.WAITING -> agent
+                else -> LiveContent(
+                    kind = LiveContent.Kind.RUNNING,
+                    title = AppStrings.get(ctx, R.string.live_remote_title),
+                    text = label,
+                    chip = label.take(LiveContent.CHIP_MAX),
+                    publicText = AppStrings.get(ctx, R.string.live_remote_title),
+                    packId = packId,
+                    mood = "working",
+                )
+            }
         } else {
             null
         }

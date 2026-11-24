@@ -1,0 +1,16 @@
+<resources>
+    <string name="live_remote_title">Remote control active</string>
+    <string name="live_remote_exec">Running DSH</string>
+    <string name="live_remote_shell">Run command</string>
+    <string name="live_remote_read">Read files</string>
+    <string name="live_remote_write">Edit files</string>
+    <string name="live_remote_search">Search</string>
+    <string name="live_remote_delegate">Delegate</string>
+    <string name="live_remote_screen">Read screen</string>
+    <string name="live_remote_open">Open app</string>
+    <string name="live_remote_tap">Tap or key</string>
+    <string name="live_remote_input">Enter text</string>
+    <string name="live_remote_scroll">Scroll</string>
+    <string name="live_remote_round">Await approval</string>
+    <string name="live_remote_tool">Run tool</string>
+</resources>

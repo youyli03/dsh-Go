@@ -53,9 +53,10 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
             val until = SystemClock.elapsedRealtime() + 310_000L
             while (result["status"] in setOf("accepted", "starting", "running", "cancelling")) {
                 if (stopped.get() || !runtime.remoteExecCurrent(origin)) return fail("cancelled")
+                policy.updateLiveOperation(call, RemoteLiveOperation.fromWire(result["activeTool"]) ?: RemoteLiveOperation.EXEC)
                 if (SystemClock.elapsedRealtime() >= until) {
                     cancel()
-                    return ToolOutput(Json.write(result + ("status" to "deadline_exceeded")), isError = true)
+                    return ToolOutput(Json.write(result - "activeTool" + ("status" to "deadline_exceeded")), isError = true)
                 }
                 Thread.sleep(750)
                 result = post(origin, "/status", mapOf("requestId" to requestId))
