@@ -88,7 +88,7 @@ function fixture(t, options = {}) {
   return { routes, events, inputs, ids, call, waitTerminal, open, loss: () => signal.aborted };
 }
 
-function normalAgent({ approval = 'ask', hold = false } = {}) {
+function normalAgent({ approval = 'ask', hold = false, extraUser = false, reason = 'completed' } = {}) {
   const events = [];
   const session = {
     id: `dsh-go-exec-${randomUUID()}`,
@@ -116,9 +116,11 @@ function normalAgent({ approval = 'ask', hold = false } = {}) {
       assert.match(message.id, /^[a-f0-9-]{36}$/);
       submissions++;
       events.push({ type: 'turn/start', data: { turn: 1 } }, { type: 'user/message', data: message });
+      events.push({ type: 'user/message', data: { role: 'user', source: { kind: 'runtime-context' } } });
+      if (extraUser) events.push({ type: 'user/message', data: { role: 'user', source: { kind: 'user' } } });
       if (!hold) events.push(
         { type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'session reply' }] } } },
-        { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
+        { type: 'turn/end', data: { turn: 1, reason: { kind: reason } } },
       );
     },
     cancel(_reason, options) { assert.equal(options.keepInbox, false); cancellations++; },
@@ -134,6 +136,19 @@ test('session exec submits only after verifying and saving its restricted permis
     { requestId, sessionId: agent.session.id, status: 'succeeded', text: 'session reply' });
   assert.equal(agent.submissions, 1);
   assert.equal(f.inputs.length, 0);
+});
+
+test('session exec withholds mixed-user replies and reports genuine turn failures separately', async t => {
+  for (const [agent, outcome] of [
+    [normalAgent({ extraUser: true }), { errorCode: 'session-turn-mixed-input' }],
+    [normalAgent({ reason: 'blocked' }), { errorCode: 'session-turn-failed', turnEndReason: 'blocked' }],
+  ]) {
+    const f = fixture(t, { agent });
+    const requestId = randomUUID();
+    const sessionId = agent.session.id;
+    await f.call('', { requestId, sessionId, prompt: 'Respond once' });
+    assert.deepEqual(await f.waitTerminal(requestId), { requestId, sessionId, status: 'failed', ...outcome });
+  }
 });
 
 test('exec never submits if the negotiated preset auto-approves or permissions could not be saved', async t => {

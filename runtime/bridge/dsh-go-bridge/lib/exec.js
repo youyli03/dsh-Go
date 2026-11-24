@@ -82,7 +82,8 @@ async function runApprovedSession(ctx, record, prompt) {
       for (; cursor < session.seq; cursor++) {
         const { type, data } = session.eventAt(cursor);
         if (type === 'turn/start') turn = data.turn;
-        if (type === 'user/message') {
+        // The engine also logs its runtime context and notices as user-role messages.
+        if (type === 'user/message' && data.source?.kind === 'user') {
           if (data.source?.rpcId === requestId) ours = true;
           else other = true;
         }
@@ -95,9 +96,13 @@ async function runApprovedSession(ctx, record, prompt) {
           record.finalizing = true;
           if (await sessions.flush(session) !== true)
             return { status: 'failed', errorCode: 'session-persistence-failed' };
-          if (data.reason?.kind === 'aborted') return { status: 'cancelled' };
-          return data.reason?.kind === 'completed' && !other
-            ? { status: 'succeeded', text } : { status: 'failed', errorCode: 'session-turn-failed' };
+          const reason = data.reason?.kind;
+          if (reason === 'aborted') return { status: 'cancelled' };
+          if (other) return { status: 'failed', errorCode: 'session-turn-mixed-input' };
+          if (reason === 'completed') return { status: 'succeeded', text };
+          const turnEndReason = ['blocked', 'error', 'max-tokens', 'interrupted', 'forked'].includes(reason)
+            ? reason : 'unknown';
+          return { status: 'failed', errorCode: 'session-turn-failed', turnEndReason };
         }
         if (type === 'turn/end') { ours = false; other = false; text = ''; }
       }
