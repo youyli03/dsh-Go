@@ -13,7 +13,9 @@ Remote control lets an Agent on your computer (Claude Code, Codex and the like) 
 
 Use `GatewayPorts no` on the server and confirm the listener is loopback only. The connection survives switching modes, going home or locking, kept by the foreground notification, whose Stop ends it. While locked the tunnel stays up but phone tools are refused, queued actions are cancelled, and a new call is needed after unlocking. Stopping remote control or rotating the token revokes in-flight grants.
 
-After phone operations are stopped, an external agent can call `start_next_round` to request a fresh round. Unlock the phone, open the Remote control page, and tap **Allow next round** in the confirmation dialog. The agent waits up to 45 seconds and should read the screen again after success. Declining the request or letting it expire keeps the current round.
+Turn on **Reconnect after disconnection** on the Remote control page and save the settings. After switching Wi-Fi or mobile data or briefly losing the network, the service stays active and tries to restore SSH forwarding about every five seconds. Start a new call after it reconnects. Host fingerprint or sign-in errors require a configuration correction before restarting.
+
+After phone operations are stopped, an external agent can call `start_next_round` to request a fresh round. Tap the remote control notification, or unlock the phone and open the Remote control page manually. Then tap **Allow next round** in the confirmation dialog. The agent waits up to 45 seconds and should read the screen again after success. Declining the request or letting it expire keeps the current round.
 
 When no phone call is running and the task is unpaused, about three minutes without a phone operation ends the current task. The SSH connection stays up, and the next operation follows the usual confirmation rules. A manually stopped round still needs an explicit restart.
 

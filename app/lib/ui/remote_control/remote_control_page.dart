@@ -27,6 +27,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
   final _fingerprint = TextEditingController();
   Map<String, Object?>? _status;
   bool _autoStart = false;
+  bool _autoReconnect = true;
   bool _allowExec = false;
   bool _execSession = false;
   bool _visible = false;
@@ -85,6 +86,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
           _username.text = result['username']?.toString() ?? '';
           _remotePort.text = result['remotePort']?.toString() ?? '18765';
           _autoStart = result['autoStart'] == true;
+          _autoReconnect = result['autoReconnect'] != false;
           _allowExec = result['allowExec'] == true;
           _execSession = result['execSession'] == true;
           _fingerprint.text = result['fingerprint']?.toString() ?? '';
@@ -189,6 +191,7 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
       'remotePort': remotePort,
       if (_privateKey.text.trim().isNotEmpty) 'privateKey': _privateKey.text.trim(),
       'autoStart': _autoStart,
+      'autoReconnect': _autoReconnect,
       'allowExec': _allowExec,
       'execSession': _execSession,
       'fingerprint': _fingerprint.text.trim(),
@@ -336,6 +339,12 @@ class _RemoteControlPageState extends State<RemoteControlPage> with WidgetsBindi
                 title: l10n.rcAutoStart,
                 value: _autoStart,
                 onChanged: disabled || active ? null : (value) => setState(() => _autoStart = value),
+              ),
+              SettingsSwitchTile(
+                title: l10n.rcAutoReconnect,
+                subtitle: l10n.rcAutoReconnectHint,
+                value: _autoReconnect,
+                onChanged: disabled || active ? null : (value) => setState(() => _autoReconnect = value),
               ),
               SettingsTile(title: l10n.rcSave, onTap: disabled || active ? null : () => unawaited(_save())),
             ],

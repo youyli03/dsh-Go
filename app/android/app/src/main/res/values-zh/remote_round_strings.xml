@@ -1,0 +1,5 @@
+<resources>
+    <string name="remote_round_channel">远控操作确认</string>
+    <string name="remote_round_title">远控请求开启下一轮</string>
+    <string name="remote_round_body">点击打开 DSH Go 查看并确认请求。</string>
+</resources>

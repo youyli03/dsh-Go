@@ -18176,6 +18176,12 @@ class L10nZh extends L10n {
   String get rcAutoStart => '打开 App 时启动远控';
 
   @override
+  String get rcAutoReconnect => '断线自动重连';
+
+  @override
+  String get rcAutoReconnectHint => '网络切换或断开后，远控服务会继续运行并尝试重连。在通知栏可随时停止。';
+
+  @override
   String get rcSave => '保存 SSH 配置';
 
   @override

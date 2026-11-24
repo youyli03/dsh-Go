@@ -89,6 +89,17 @@ void main() {
     expect(pageLinkIds, containsAll(before));
   });
 
+  test('the remote confirmation notification link opens a page only on Android', () {
+    registerPageLink(remoteControlPageLink, () => const SizedBox());
+    expect(pageLinkId(Uri.parse('dshgo://open/remote-control')), remoteControlPageLink);
+    for (final os in ['android', 'ios', 'ohos']) {
+      final container = ProviderContainer(overrides: [operatingSystemProvider.overrideWithValue(os)]);
+      addTearDown(container.dispose);
+      final page = container.read(pageLinkResolverProvider)(remoteControlPageLink, null);
+      expect(page, os == 'android' ? isA<SizedBox>() : isNull);
+    }
+  });
+
   test('a row link opens the page the row is on, at the row', () {
     for (final spot in SettingsIndex.rows.where((s) => s.link != null)) {
       final page = pageForId(spot.link!, null);

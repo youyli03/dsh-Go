@@ -6,6 +6,8 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 
 internal object RemoteControlState {
+    const val ROUND_TIMEOUT_SECONDS = 45L
+
     class RoundRequest {
         val id: String = UUID.randomUUID().toString()
         val decision = CompletableFuture<Boolean>()

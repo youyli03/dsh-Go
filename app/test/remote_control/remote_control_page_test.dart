@@ -121,6 +121,25 @@ void main() {
     await dispose(tester);
   });
 
+  testWidgets('automatic reconnect can be turned off and saved independently', (tester) async {
+    await pump(tester);
+    final reconnect = find.text(l10n.rcAutoReconnect);
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -750));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(reconnect);
+    await tester.pump();
+    await tester.tap(reconnect);
+    final save = find.text(l10n.rcSave);
+    await tester.ensureVisible(save);
+    await tester.pump();
+    await tester.tap(save);
+    await tester.pump();
+    final config = calls.singleWhere((call) => call.method == 'configure').arguments as Map;
+    expect(config['autoReconnect'], isFalse);
+    expect(config['autoStart'], isFalse);
+    await dispose(tester);
+  });
+
   for (final approved in [true, false]) {
     testWidgets('next-round decision is bound to the shown request ($approved)', (tester) async {
       status = {...status, 'state': 'connected', 'roundRequestId': 'round-request'};

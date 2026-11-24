@@ -67,6 +67,7 @@ internal object RemoteControlConfig {
         "username" to c.optString("username"), "remotePort" to c.optInt("remotePort", 18765),
         "fingerprint" to c.optString("fingerprint"), "hasPrivateKey" to c.optString("privateKey").isNotEmpty(),
         "hasToken" to c.optString("token").isNotEmpty(), "autoStart" to c.optBoolean("autoStart"),
+        "autoReconnect" to c.optBoolean("autoReconnect", true),
         "allowExec" to c.optBoolean("allowExec"),
         "execSession" to c.optBoolean("execSession"),
     )

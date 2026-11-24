@@ -38,6 +38,9 @@ const companionPageLink = 'companion';
 /// 酒馆 (role play): main.dart registers its page ([registerPageLink]).
 const tavernPageLink = 'tavern';
 
+/// Android's notification opens this page for an in-app round confirmation.
+const remoteControlPageLink = 'remote-control';
+
 /// Pages the entry point adds, by id: pages under ui/ that this file may not
 /// import itself (docs/architecture.md, 目录).
 final _registeredPages = <String, Widget Function()>{};
@@ -91,13 +94,16 @@ final pageLinkResolverProvider = Provider<PageResolver>((ref) {
   final os = ref.watch(operatingSystemProvider);
   if (os == 'ohos') {
     return (id, sessionId) {
+      if (id == remoteControlPageLink) return null;
       final target = SettingsIndex.ohosLink(id);
       return SettingsIndex.androidOnlyLink(target) ? null : pageForId(target, sessionId);
     };
   }
   final android = ref.watch(androidSystemFeaturesProvider);
   return (id, sessionId) =>
-      SettingsIndex.ohosOnlyLink(id) || (!android && SettingsIndex.androidOnlyLink(id, ios: os == 'ios'))
+      (id == remoteControlPageLink && os != 'android') ||
+          SettingsIndex.ohosOnlyLink(id) ||
+          (!android && SettingsIndex.androidOnlyLink(id, ios: os == 'ios'))
       ? null
       : pageForId(id, sessionId);
 });

@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -19,6 +20,7 @@ import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.UserInfo
 import java.io.Closeable
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 
@@ -85,8 +87,15 @@ internal class RemoteControlService : Service() {
             report("error", "mcp_start_failed"); return
         }
         endpoint.use {
+            val autoReconnect = config.optBoolean("autoReconnect", true)
+            val connectivity = getSystemService(ConnectivityManager::class.java)
             var connectedBefore = false
             while (!stopped && !Thread.currentThread().isInterrupted) {
+                val network = connectivity.activeNetwork
+                if (autoReconnect && network == null) {
+                    if (!retry()) return
+                    continue
+                }
                 val pin = FingerprintPin(config.optString("fingerprint"))
                 val client = JSch().apply { setHostKeyRepository(pin) }
                 var session: Session? = null
@@ -108,12 +117,15 @@ internal class RemoteControlService : Service() {
                     next.setPortForwardingR("127.0.0.1", config.getInt("remotePort"), "127.0.0.1", endpoint.port)
                     connectedBefore = true
                     report("connected")
-                    while (next.isConnected && !stopped) Thread.sleep(500)
+                    while (next.isConnected && !stopped) {
+                        if (autoReconnect && connectivity.activeNetwork != network) break
+                        Thread.sleep(500)
+                    }
                 } catch (_: InterruptedException) {
                     return
-                } catch (_: Exception) {
+                } catch (failure: Exception) {
                     if (stopped) return
-                    if (pin.mismatch || phase != "ssh_connect_failed" || !connectedBefore) {
+                    if (pin.mismatch || !autoReconnect || !shouldRetry(phase, connectedBefore, failure)) {
                         report("error", if (pin.mismatch) "fingerprint_mismatch" else phase)
                         return
                     }
@@ -122,9 +134,22 @@ internal class RemoteControlService : Service() {
                     client.removeAllIdentity()
                 }
                 if (stopped) return
-                report("reconnecting")
-                try { Thread.sleep(5_000) } catch (_: InterruptedException) { return }
+                if (!autoReconnect) {
+                    report("error", "ssh_disconnected")
+                    return
+                }
+                if (!retry()) return
             }
+        }
+    }
+
+    private fun retry(): Boolean {
+        report("reconnecting")
+        return try {
+            Thread.sleep(5_000)
+            !stopped
+        } catch (_: InterruptedException) {
+            false
         }
     }
 
@@ -156,6 +181,14 @@ internal class RemoteControlService : Service() {
     }
 
     companion object {
+        internal fun shouldRetry(phase: String, connectedBefore: Boolean, failure: Exception): Boolean =
+            when (phase) {
+                "ssh_connect_failed" -> generateSequence<Throwable>(failure) { it.cause }.any { it is IOException }
+                // The old server-side listener may still own the port after a network change.
+                "forward_rejected" -> connectedBefore
+                else -> false
+            }
+
         const val STOP = "dsh.remote_control.STOP"
         const val LAUNCH = "dsh.remote_control.LAUNCH"
         private const val CHANNEL = "dsh.remote_control"

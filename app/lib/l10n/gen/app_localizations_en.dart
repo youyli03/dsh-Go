@@ -19161,6 +19161,13 @@ class L10nEn extends L10n {
   String get rcAutoStart => 'Start remote control on app launch';
 
   @override
+  String get rcAutoReconnect => 'Reconnect after disconnection';
+
+  @override
+  String get rcAutoReconnectHint =>
+      'Remote control stays active and retries after a connection loss or network switch. Stop it from the notification at any time.';
+
+  @override
   String get rcSave => 'Save SSH configuration';
 
   @override

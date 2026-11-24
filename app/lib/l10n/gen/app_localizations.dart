@@ -33378,6 +33378,18 @@ abstract class L10n {
   /// **'打开 App 时启动远控'**
   String get rcAutoStart;
 
+  /// No description provided for @rcAutoReconnect.
+  ///
+  /// In zh, this message translates to:
+  /// **'断线自动重连'**
+  String get rcAutoReconnect;
+
+  /// No description provided for @rcAutoReconnectHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'网络切换或断开后，远控服务会继续运行并尝试重连。在通知栏可随时停止。'**
+  String get rcAutoReconnectHint;
+
   /// No description provided for @rcSave.
   ///
   /// In zh, this message translates to:

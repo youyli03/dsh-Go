@@ -1,0 +1,5 @@
+<resources>
+    <string name="remote_round_channel">Remote control confirmations</string>
+    <string name="remote_round_title">Remote control requests a new round</string>
+    <string name="remote_round_body">Tap to open DSH Go and review the request.</string>
+</resources>

@@ -46,6 +46,8 @@
   "rcPrivateKey": "Copy the complete SSH private key first",
   "rcKeySaved": "A key is saved",
   "rcAutoStart": "Start remote control on app launch",
+  "rcAutoReconnect": "Reconnect after disconnection",
+  "rcAutoReconnectHint": "Remote control stays active and retries after a connection loss or network switch. Stop it from the notification at any time.",
   "rcSave": "Save SSH configuration",
   "rcVerifyFingerprint": "Enter the server fingerprint from a trusted source. Unverified hosts are not accepted.",
   "rcCancel": "Cancel",

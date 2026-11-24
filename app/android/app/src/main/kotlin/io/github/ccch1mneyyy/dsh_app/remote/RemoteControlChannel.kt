@@ -42,6 +42,7 @@ internal object RemoteControlChannel {
                                     put("passphrase", passphrase.orEmpty())
                                 }
                                 call.argument<Boolean>("autoStart")?.let { put("autoStart", it) }
+                                call.argument<Boolean>("autoReconnect")?.let { put("autoReconnect", it) }
                                 call.argument<Boolean>("allowExec")?.let { put("allowExec", it) }
                                 call.argument<Boolean>("execSession")?.let { put("execSession", it) }
                             }

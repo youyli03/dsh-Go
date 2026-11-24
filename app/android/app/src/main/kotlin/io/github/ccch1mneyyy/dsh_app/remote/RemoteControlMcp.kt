@@ -55,8 +55,10 @@ internal class RemoteControlMcp private constructor(private val context: Context
         registerCancellation { request.decision.cancel(false) }
         if (!RemoteControlState.showRoundRequest(request))
             return failure("next_round_unavailable", "Remote phone permission is no longer active.")
+        val notification = RemoteRoundNotification(context, request.id)
         try {
-            val approved = request.decision.get(45, TimeUnit.SECONDS)
+            if (!request.decision.isDone) notification.show()
+            val approved = request.decision.get(RemoteControlState.ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             if (!approved) return failure("next_round_denied", "The phone user declined the request.")
             synchronized(this) {
                 if (!allowed()) return failure("next_round_unavailable", "Remote phone permission is no longer active.")
@@ -74,6 +76,7 @@ internal class RemoteControlMcp private constructor(private val context: Context
             return failure("next_round_unavailable", "The request was interrupted.")
         } finally {
             RemoteControlState.clearRoundRequest(request)
+            notification.dismiss()
         }
     }
 
