@@ -145,6 +145,9 @@ function normalAgent({ approval = 'ask', hold = false, extraUser = false, reason
   };
   return {
     session,
+    status: 'idle',
+    phase: { kind: 'idle' },
+    inbox: { nextTurn: [], nextStep: [], claimed: [] },
     ctx: { get: name => services[name] },
     get submissions() { return submissions; },
     get cancellations() { return cancellations; },
@@ -176,6 +179,26 @@ test('session exec submits only after verifying and saving its restricted permis
     { requestId, sessionId: agent.session.id, status: 'succeeded', text: 'session reply' });
   assert.equal(agent.submissions, 1);
   assert.equal(f.inputs.length, 0);
+});
+
+test('session continuation requires a matching prior request and an idle agent', async t => {
+  const agent = normalAgent();
+  const f = fixture(t, { agent });
+  const requestId = randomUUID();
+  const sessionId = agent.session.id;
+  assert.equal((await f.call('', { requestId, sessionId, prompt: 'Start' })).status, 202);
+  await f.waitTerminal(requestId);
+  const resume = { sessionId, resumeRequestId: requestId, prompt: 'Correct the previous result' };
+  assert.equal((await f.call('', { ...resume, requestId: randomUUID(), resumeRequestId: randomUUID() })).status, 409);
+  agent.inbox.nextTurn.push({});
+  const busyId = randomUUID();
+  assert.equal((await f.call('', { ...resume, requestId: busyId })).status, 202);
+  assert.equal((await f.waitTerminal(busyId)).errorCode, 'session_busy');
+  agent.inbox.nextTurn.pop();
+  const resumedId = randomUUID();
+  assert.equal((await f.call('', { ...resume, requestId: resumedId, timeoutSeconds: 1800 })).status, 202);
+  assert.equal((await f.waitTerminal(resumedId)).status, 'succeeded');
+  assert.equal(agent.submissions, 2);
 });
 
 test('session exec reports only the category of the current tool until its result arrives', async t => {

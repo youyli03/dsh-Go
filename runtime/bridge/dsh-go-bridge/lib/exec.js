@@ -29,6 +29,7 @@ function toolActivity(name) {
     case 'mcp__phone__tap': case 'mcp__phone__tap_xy': return 'tap';
     case 'mcp__phone__type': return 'input';
     case 'mcp__phone__scroll': return 'scroll';
+    case 'mcp__phone__handoff': return 'handoff';
     default: return 'tool';
   }
 }
@@ -45,7 +46,7 @@ let launchProof = (() => {
 async function runApprovedSession(ctx, record, prompt) {
   const { requestId, sessionId } = record.result;
   const localStop = record.abort.signal;
-  const signal = AbortSignal.any([localStop, AbortSignal.timeout(5 * 60_000)]);
+  const signal = AbortSignal.any([localStop, AbortSignal.timeout(record.timeoutMs)]);
   let agent;
   let cancelFailed = false;
   const cancel = () => {
@@ -69,6 +70,8 @@ async function runApprovedSession(ctx, record, prompt) {
       return true;
     };
     const current = () => ctx.get('agents')?.get(sessionId) === agent && agent.session === session;
+    const idle = () => agent.status === 'idle' && agent.phase?.kind === 'idle' &&
+      agent.inbox?.nextTurn.length === 0 && agent.inbox.nextStep.length === 0 && agent.inbox.claimed.length === 0;
     if (typeof agent?.followup !== 'function' || typeof agent.cancel !== 'function' ||
         typeof sessions?.flush !== 'function' || typeof session?.eventAt !== 'function' ||
         !Number.isSafeInteger(session.seq) || session.seq < 0)
@@ -77,18 +80,21 @@ async function runApprovedSession(ctx, record, prompt) {
         typeof sandbox?.resolve !== 'function' || typeof approval?.effectivePolicy !== 'function')
       return { status: 'failed', errorCode: 'session-permission-unavailable' };
     signal.throwIfAborted();
-    if (!current() || !blank())
+    if (!current() || (!record.resume && !blank()))
       return { status: 'failed', errorCode: 'session-unavailable' };
+    if (record.resume && !idle()) return { status: 'failed', errorCode: 'session_busy' };
     const spec = permissions.resolve('workspace-write');
     if (spec.sandbox !== 'workspace-write' || spec.approval !== 'ask')
       return { status: 'failed', errorCode: 'session-permission-unavailable' };
-    permissions.set(session, 'workspace-write');
-    if (await sessions.flush(session) !== true)
-      return { status: 'failed', errorCode: 'session-persistence-failed' };
+    if (!record.resume) {
+      permissions.set(session, 'workspace-write');
+      if (await sessions.flush(session) !== true)
+        return { status: 'failed', errorCode: 'session-persistence-failed' };
+    }
     signal.throwIfAborted();
     if (!current() ||
         sandbox.resolve({ session }).mode !== 'workspace-write' || approval.effectivePolicy(session) !== 'ask' ||
-        !blank())
+        (!record.resume && !blank()))
       return { status: 'failed', errorCode: 'session-permission-unavailable' };
     let cursor = session.seq, turn, ours = false, other = false, text = '';
     const activeTools = new Map();
@@ -109,8 +115,16 @@ async function runApprovedSession(ctx, record, prompt) {
           else other = true;
         }
         if (ours && !other && data.turn === turn) {
-          if (type === 'tool/call') activeTools.set(data.callId, toolActivity(data.name));
-          if (type === 'tool/result') activeTools.delete(data.message?.toolCallId);
+          if (type === 'tool/call') {
+            activeTools.set(data.callId, toolActivity(data.name));
+            record.result.toolCalls = (record.result.toolCalls ?? 0) + 1;
+          }
+          if (type === 'tool/result') {
+            const id = data.message?.toolCallId;
+            if (data.message?.isError === true && activeTools.has(id))
+              record.result.lastFailedTool = activeTools.get(id);
+            activeTools.delete(id);
+          }
         }
         if (type === 'assistant/message' && ours && !other && data.turn === turn) {
           const reply = data.message?.content?.filter(part => part.type === 'text').map(part => part.text).join('');
@@ -142,7 +156,8 @@ async function runApprovedSession(ctx, record, prompt) {
     if (started && !signal.aborted) cancel();
     if (cancelFailed) return { status: 'failed', errorCode: 'session-cancel-unconfirmed' };
     return localStop.aborted ? { status: 'cancelled' } :
-      { status: 'failed', errorCode: signal.aborted ? 'model-timeout' : 'session-exec-failed' };
+      signal.aborted ? { status: 'timed_out', errorCode: 'model-timeout' } :
+      { status: 'failed', errorCode: 'session-exec-failed' };
   } finally {
     delete record.result.activeTool;
     signal.removeEventListener('abort', cancel);
@@ -212,7 +227,7 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest, workspaceRo
   const reject = (res, status, code) => respond(res, status, { error: { code, message: code } });
   async function execute(record, sessions, session, llm, selection, prompt, workspace) {
     const explicitSignal = record.abort.signal;
-    const signal = AbortSignal.any([explicitSignal, AbortSignal.timeout(5 * 60_000)]);
+    const signal = AbortSignal.any([explicitSignal, AbortSignal.timeout(record.timeoutMs)]);
     let text = '', bytes = 0, finish;
     let result;
     try {
@@ -238,7 +253,8 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest, workspaceRo
       result = { status: 'succeeded', text };
     } catch {
       result = explicitSignal.aborted ? { status: 'cancelled' }
-        : { status: 'failed', errorCode: signal.aborted ? 'model-timeout' : 'model-failed' };
+        : signal.aborted ? { status: 'timed_out', errorCode: 'model-timeout' }
+        : { status: 'failed', errorCode: 'model-failed' };
     }
     // Publish the actual DSH session only AFTER model work is over. This run
     // never opens an Agent, session controller, tool registry or delegate.
@@ -294,7 +310,11 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest, workspaceRo
         const start = path === PATH;
         if (!body || !UUID.test(typeof body.requestId === 'string' ? body.requestId : '') ||
             Object.keys(body).some(key => key !== 'requestId' &&
-              !(start && (key === 'prompt' || key === 'sessionId' || key === 'workspaceId'))) ||
+              !(start && ['prompt', 'sessionId', 'workspaceId', 'timeoutSeconds', 'resumeRequestId'].includes(key))) ||
+            start && body.resumeRequestId !== undefined &&
+              (typeof body.resumeRequestId !== 'string' || !UUID.test(body.resumeRequestId) || body.sessionId === undefined) ||
+            start && body.timeoutSeconds !== undefined &&
+              (!Number.isInteger(body.timeoutSeconds) || body.timeoutSeconds < 1 || body.timeoutSeconds > 3600) ||
             start && body.workspaceId !== undefined &&
               (typeof body.workspaceId !== 'string' || body.workspaceId !== execWorkspaceId || body.sessionId !== undefined) ||
             start && body.sessionId !== undefined &&
@@ -330,8 +350,15 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest, workspaceRo
           reject(res, 503, active ? 'exec-busy' : 'exec-request-capacity');
         } else {
           try {
+            const timeoutMs = (body.timeoutSeconds ?? 900) * 1000;
             if (body.sessionId !== undefined) {
-              const record = { abort: new AbortController(),
+              const prior = records.get(body.resumeRequestId);
+              if (body.resumeRequestId !== undefined &&
+                  (!prior || prior.result.sessionId !== body.sessionId || !prior.done || !prior.expiry)) {
+                reject(res, 409, 'resume-unavailable');
+                return true;
+              }
+              const record = { abort: new AbortController(), timeoutMs, resume: prior !== undefined,
                 result: { requestId: body.requestId, sessionId: body.sessionId, status: 'running' } };
               records.set(body.requestId, record);
               active = record;
@@ -360,7 +387,8 @@ export function createExecRoutes(ctx, { readBody, send, proofDigest, workspaceRo
             }
             const sessionId = `dsh-go-exec-${randomUUID()}`;
             const session = sessions.prepare(sessionId, { meta: { cwd: workspace?.path ?? process.cwd() } });
-            const record = { abort: new AbortController(), result: { requestId: body.requestId, sessionId, status: 'running' } };
+            const record = { abort: new AbortController(), timeoutMs,
+              result: { requestId: body.requestId, sessionId, status: 'running' } };
             records.set(body.requestId, record);
             active = record;
             record.done = execute(record, sessions, session, llm, { provider: selection.provider, model: selection.model }, body.prompt, workspace)

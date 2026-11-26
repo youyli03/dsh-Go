@@ -20,15 +20,28 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
     private var cookie: String? = null
     private var cookieProof: String? = null
 
-    fun execute(args: Map<String, Any?>, credential: String): ToolOutput {
+    fun execute(
+        args: Map<String, Any?>, credential: String,
+        requestId: String = UUID.randomUUID().toString(),
+        resumeSession: String? = null,
+        resumeRequest: String? = null,
+        progress: (Map<String, Any?>) -> Unit = {},
+        registerCancel: (() -> Unit) -> Unit = {},
+    ): ToolOutput {
         fun fail(code: String) = ToolOutput(Json.write(mapOf("status" to code)), isError = true)
-        if (args.keys != setOf("prompt")) return fail("invalid_arguments")
+        if (args.keys.any { it != "prompt" && it != "timeout_seconds" }) return fail("invalid_arguments")
         val prompt = (args["prompt"] as? String)?.takeIf { it.isNotBlank() && it.length <= 32_768 }
             ?: return fail("invalid_prompt")
+        val timeoutSeconds = if ("timeout_seconds" in args) {
+            val value = (args["timeout_seconds"] as? Number)?.toDouble()
+                ?: return fail("invalid_timeout")
+            if (value !in 1.0..3600.0 || value != value.toInt().toDouble()) return fail("invalid_timeout")
+            value.toInt()
+        } else 900
         if (!RemoteControlState.allowExec || !RemoteControlState.authenticates(credential)) return fail("exec_disabled")
         val origin = runtime.remoteExecOrigin() ?: return fail("engine_unavailable")
         val sessionMode = RemoteControlState.execSession
-        val requestId = UUID.randomUUID().toString()
+        if (resumeSession != null && !sessionMode) return fail("session_mode_required")
         val stopped = AtomicBoolean()
         fun cancel() {
             if (stopped.compareAndSet(false, true)) cancellationExecutor.execute {
@@ -41,25 +54,30 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
             return fail("exec_busy")
         }
         try {
+            registerCancel(::cancel)
             if (stopped.get() || !policy.allowed(call) || !RemoteControlState.authenticates(credential)) return fail("cancelled")
             val workspaceId = try {
                 (post(origin, "/workspace", emptyMap())["workspaceId"] as? String)?.takeIf(String::isNotBlank)
             } catch (_: Exception) { null }
             if (stopped.get() || !policy.allowed(call)) return fail("cancelled")
             if (workspaceId == null) return fail("workspace_unavailable")
-            val request = mutableMapOf("requestId" to requestId, "prompt" to prompt)
+            val request = mutableMapOf("requestId" to requestId, "prompt" to prompt, "timeoutSeconds" to timeoutSeconds)
             if (sessionMode) {
-                val sessionId = "dsh-go-exec-${UUID.randomUUID()}"
-                if (!createSession(origin, sessionId, workspaceId)) return fail("session_create_failed")
+                val sessionId = resumeSession ?: "dsh-go-exec-${UUID.randomUUID()}"
+                if (resumeSession == null && !createSession(origin, sessionId, workspaceId)) return fail("session_create_failed")
                 if (stopped.get() || !policy.allowed(call)) return fail("cancelled")
                 request["sessionId"] = sessionId
+                if (resumeRequest != null) request["resumeRequestId"] = resumeRequest
             } else {
                 request["workspaceId"] = workspaceId
             }
             var result = post(origin, "", request)
-            val until = SystemClock.elapsedRealtime() + 310_000L
+            val until = SystemClock.elapsedRealtime() + timeoutSeconds * 1_000L + 10_000L
             while (result["status"] in setOf("accepted", "starting", "running", "cancelling")) {
-                if (stopped.get() || !runtime.remoteExecCurrent(origin)) return fail("cancelled")
+                if (!runtime.remoteExecCurrent(origin)) return fail("engine_unavailable")
+                progress(result.entries.mapNotNull { (key, value) ->
+                    (key as? String)?.let { it to value }
+                }.toMap())
                 policy.updateLiveOperation(call, RemoteLiveOperation.fromWire(result["activeTool"]) ?: RemoteLiveOperation.EXEC)
                 if (SystemClock.elapsedRealtime() >= until) {
                     cancel()
@@ -68,7 +86,7 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
                 Thread.sleep(750)
                 result = post(origin, "/status", mapOf("requestId" to requestId))
             }
-            return if (stopped.get() || !policy.allowed(call)) fail("cancelled")
+            return if (!policy.allowed(call) || !RemoteControlState.authenticates(credential)) fail("cancelled")
                 else ToolOutput(Json.write(result), isError = result["status"] != "succeeded")
         } catch (_: InterruptedException) {
             if (sessionMode) cancel()
@@ -170,6 +188,10 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
         private val cancelWorker = Executors.newSingleThreadExecutor()
         val tool = mapOf("name" to "dsh_exec", "description" to "Run one prompt in a new local DSH session.",
             "inputSchema" to mapOf("type" to "object", "required" to listOf("prompt"), "additionalProperties" to false,
-                "properties" to mapOf("prompt" to mapOf("type" to "string", "maxLength" to 32768))))
+                "properties" to mapOf(
+                    "prompt" to mapOf("type" to "string", "maxLength" to 32768),
+                    "timeout_seconds" to mapOf("type" to "integer", "minimum" to 1, "maximum" to 3600,
+                        "default" to 900, "description" to "Execution deadline in seconds."),
+                )))
     }
 }
