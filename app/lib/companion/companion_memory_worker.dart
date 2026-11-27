@@ -5,11 +5,20 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dsh_client/companion.dart';
+import 'package:dsh_client/dsh_client.dart' show DshClosedException;
 import 'package:http/http.dart' as http;
 
+import 'companion_agent_loop.dart';
+import 'companion_agent_tools.dart';
 import 'companion_light.dart';
 
 enum CompanionMemoryWork { idle, waiting, configuration, stale, committed, invalid }
+
+typedef CompanionMaintenanceTools = CompanionAgentMemoryTools Function(
+  MemoryRow turn,
+  bool Function() isCurrent,
+  CompanionAgentMaintenanceCommit onCommitted,
+);
 
 class CompanionAuxiliaryReply {
   const CompanionAuxiliaryReply({required this.text, required this.terminal, required this.complete});
@@ -50,7 +59,28 @@ abstract interface class CompanionMemoryTransport {
   });
 }
 
-class CompanionLightMemoryTransport implements CompanionMemoryTransport {
+/// A model round only. Tool execution and continuation remain in the phone's
+/// shared loop; the original followup-only transport contract stays usable.
+abstract interface class CompanionAgentModelTransport implements CompanionMemoryTransport {
+  bool get agentConfigured;
+  bool get current;
+
+  Future<CompanionAgentMessage?> readAgent({
+    required CompanionAgentModelRequest request,
+    required String system,
+    required List<Map<String, Object?>> messages,
+    required List<CompanionAgentTool> tools,
+    required bool Function() isCurrent,
+    required void Function(String) onText,
+    required void Function() onDispatchUncertain,
+    required void Function() onSent,
+    required void Function(Map<String, Object?>) onUsage,
+    void Function(Map<String, Object?>, {required bool partial})? onUsageSettled,
+    int maxTokens = 800,
+  });
+}
+
+class CompanionLightMemoryTransport implements CompanionAgentModelTransport {
   CompanionLightMemoryTransport({required this.apiKey, http.Client Function()? client})
     : _client = client ?? http.Client.new;
 
@@ -65,6 +95,43 @@ class CompanionLightMemoryTransport implements CompanionMemoryTransport {
 
   @override
   bool get configured => apiKey().trim().isNotEmpty;
+
+  @override
+  bool get agentConfigured => configured;
+
+  @override
+  bool get current => true;
+
+  @override
+  Future<CompanionAgentMessage?> readAgent({
+    required CompanionAgentModelRequest request,
+    required String system,
+    required List<Map<String, Object?>> messages,
+    required List<CompanionAgentTool> tools,
+    required bool Function() isCurrent,
+    required void Function(String) onText,
+    required void Function() onDispatchUncertain,
+    required void Function() onSent,
+    required void Function(Map<String, Object?>) onUsage,
+    void Function(Map<String, Object?>, {required bool partial})? onUsageSettled,
+    int maxTokens = 800,
+  }) => request.read(
+    client: _client(),
+    apiKey: apiKey().trim(),
+    system: system,
+    messages: messages,
+    tools: tools,
+    isCurrent: isCurrent,
+    onText: onText,
+    onSent: () {
+      // Light invokes this before client.send; keep its dispatch gate here.
+      if (!isCurrent()) throw const DshClosedException('Companion turn changed');
+      onSent();
+    },
+    onUsage: (usage) => onUsage(usage.toJson()),
+    onUsageSettled: onUsageSettled,
+    maxTokens: maxTokens,
+  );
 
   @override
   Future<CompanionAuxiliaryReply> call({
@@ -125,14 +192,21 @@ class CompanionMemoryWorker {
     required this.transport,
     required this.nowMilliseconds,
     required this.estimateTokens,
+    this.maintenanceTools,
   });
 
   final CompanionMemoryStore store;
-  final CompanionMemoryTransport? Function() transport;
+  final FutureOr<CompanionMemoryTransport?> Function() transport;
   final int Function() nowMilliseconds;
   final int Function(String) estimateTokens;
+  // The original followup-only callers need no maintenance adapter. The real
+  // phone owner supplies the same memory tools used by the foreground Agent.
+  final CompanionMaintenanceTools? maintenanceTools;
   Completer<void>? _cancelled;
   Completer<void>? _finished;
+  CompanionAgentModelRequest? _request;
+  String? _maintenanceTurn;
+  int? _maintenanceControl;
 
   bool get busy => _cancelled != null;
 
@@ -141,6 +215,20 @@ class CompanionMemoryWorker {
   void cancel() {
     final signal = _cancelled;
     if (signal != null && !signal.isCompleted) signal.complete();
+    final request = _request;
+    if (request != null) {
+      request.client?.close();
+      unawaited(request.drain().catchError((Object _) {}));
+    }
+  }
+
+  bool acceptsControl(int revision) {
+    final turn = _maintenanceTurn;
+    return turn != null &&
+        _cancelled?.isCompleted == false &&
+        _maintenanceControl == revision &&
+        store.archive['control_revision'] == revision &&
+        store.isAgentTurnCurrent(turn);
   }
 
   Future<void> stop() {
@@ -161,10 +249,6 @@ class CompanionMemoryWorker {
     }
     bool current() => isCurrent() && store.isFollowupCurrent(captured, nowMs: nowMilliseconds());
     if (!current()) {
-      return null;
-    }
-    final route = transport();
-    if (route == null || !route.configured) {
       return null;
     }
     final card = store.cards().singleWhere((row) => row['id'] == captured['card_id']);
@@ -201,23 +285,27 @@ class CompanionMemoryWorker {
     if (estimateTokens('$companionMemoryFollowupPrompt\n$input') > inputLimit) {
       return null;
     }
-    final requestId = store.reserveRequest(
-      category: 'followup',
-      provider: route.provider,
-      model: route.model,
-      inputTokens: inputLimit,
-      outputTokens: outputLimit,
-      batchId: 'followup:${captured['id']}:${captured['row_rev']}',
-    );
-    if (requestId == null) {
-      return null;
-    }
+    // Own the lane before asynchronous Host discovery. A second opportunity
+    // cannot enter while this one is awaiting its captured route.
     final cancelled = _cancelled = Completer<void>();
     final finished = _finished = Completer<void>();
+    String? reserved;
     var terminal = 'local_error';
     var dispatched = false;
     var uncertain = false;
     try {
+      final route = await transport();
+      if (cancelled.isCompleted || !current() || route == null || !route.configured) return null;
+      final requestId = store.reserveRequest(
+        category: 'followup',
+        provider: route.provider,
+        model: route.model,
+        inputTokens: inputLimit,
+        outputTokens: outputLimit,
+        batchId: 'followup:${captured['id']}:${captured['row_rev']}',
+      );
+      reserved = requestId;
+      if (requestId == null) return null;
       final reply = await route.call(
         requestId: requestId,
         category: 'followup',
@@ -233,7 +321,9 @@ class CompanionMemoryWorker {
           uncertain = true;
         },
         onSent: () {
-          if (cancelled.isCompleted || !current()) {
+          // Before Light dispatch this is a permission gate. After a Host
+          // handoff it records an observed fact, even if the room retired.
+          if (!uncertain && (cancelled.isCompleted || !current())) {
             throw const _MemoryRequestStale();
           }
           store.markRequestSent(requestId);
@@ -258,7 +348,7 @@ class CompanionMemoryWorker {
       return null;
     } finally {
       try {
-        store.finishRequest(requestId, terminal: terminal);
+        if (reserved != null) store.finishRequest(reserved, terminal: terminal);
       } finally {
         if (!cancelled.isCompleted) {
           cancelled.complete();
@@ -270,147 +360,377 @@ class CompanionMemoryWorker {
     }
   }
 
-  Future<CompanionMemoryWork> extract({bool forceTail = false}) async {
-    if (busy) return CompanionMemoryWork.idle;
-    final route = transport();
-    if (route == null || !route.configured) return CompanionMemoryWork.configuration;
-    final batch = store.nextBatch(forceTail: forceTail, estimateTokens: estimateTokens);
-    if (batch == null) return CompanionMemoryWork.idle;
-    return _runBatch(
-      route,
-      category: 'extract',
-      batchId: batch.id,
-      system: companionMemoryExtractionPrompt,
-      input: jsonEncode(extractionInput(batch, processedAtUtc: nowMilliseconds())),
-      isCurrent: () => store.isBatchCurrent(batch),
-      parse: (text) => parseExtractionProposal(text, batch),
-      commit: (proposal) => store.commitExtraction(batch, proposal),
-      invalid: () => store.recordInvalidProposal(batch),
-      release: (reason) => store.releaseBatch(batch, reason: reason),
-    );
-  }
+  Future<CompanionMemoryWork> extract({bool forceTail = false, int? offsetMinutes}) => _maintain(
+    kind: 'extract',
+    forceTail: forceTail,
+    offsetMinutes: offsetMinutes ?? DateTime.now().timeZoneOffset.inMinutes,
+  );
 
-  Future<CompanionMemoryWork> consolidate() async {
-    if (busy) return CompanionMemoryWork.idle;
-    // This performs exact local merges even without a usable model route.
-    final batch = store.nextMergeBatch(estimateTokens: estimateTokens);
-    if (batch == null) return CompanionMemoryWork.idle;
-    final route = transport();
-    if (route == null || !route.configured) {
-      store.releaseMergeBatch(batch);
-      return CompanionMemoryWork.configuration;
-    }
-    return _runBatch(
-      route,
-      category: 'organize',
-      batchId: batch.id,
-      system: companionMemoryConsolidationPrompt,
-      input: jsonEncode(consolidationInput(batch)),
-      isCurrent: () => store.isMergeBatchCurrent(batch),
-      parse: (text) => parseMergeProposal(text, batch),
-      commit: (proposal) => store.commitMerge(batch, proposal),
-      invalid: () => store.releaseMergeBatch(batch, examined: true),
-      release: (_) => store.releaseMergeBatch(batch),
-    );
-  }
+  Future<CompanionMemoryWork> consolidate({int? offsetMinutes}) =>
+      _maintain(kind: 'organize', offsetMinutes: offsetMinutes ?? DateTime.now().timeZoneOffset.inMinutes);
 
-  /// Extraction and consolidation share the same physical request lifetime.
-  Future<CompanionMemoryWork> _runBatch(
-    CompanionMemoryTransport route, {
-    required String category,
-    required String batchId,
-    required String system,
-    required String input,
-    required bool Function() isCurrent,
-    required MemoryRow Function(String) parse,
-    required bool Function(MemoryRow) commit,
-    required void Function() invalid,
-    required void Function(String) release,
+  /// One fixed scope of the real parent claim per opportunity. Later scopes
+  /// use the same parent budget, but never inherit another role's transcript.
+  Future<CompanionMemoryWork> _maintain({
+    required String kind,
+    required int offsetMinutes,
+    bool forceTail = false,
   }) async {
-    final requestId = store.reserveRequest(
-      category: category,
-      provider: route.provider,
-      model: route.model,
-      inputTokens: memoryBatchInputTokens,
-      outputTokens: memoryBatchOutputTokens,
-      batchId: batchId,
-    );
-    if (requestId == null) {
-      release('budget');
-      return CompanionMemoryWork.waiting;
+    if (busy) return CompanionMemoryWork.idle;
+    if (kind == 'organize' && store.mergeAgentExactDuplicates() > 0) {
+      return CompanionMemoryWork.committed;
     }
-    final cancelled = Completer<void>();
-    _cancelled = cancelled;
+    final createTools = maintenanceTools;
+    if (createTools == null) return CompanionMemoryWork.configuration;
+    // Discovery can await the Host. Acquire cancellation and the lane first;
+    // neither a second opportunity nor a departed room can take over it.
+    final cancelled = _cancelled = Completer<void>();
     final finished = _finished = Completer<void>();
-    var terminal = 'local_error';
-    var dispatched = false;
-    var uncertain = false;
+    String? ownedTurnId;
+    CompanionAgentModelTransport? activeRoute;
+    CompanionAgentMemoryTools? tools;
+    var complete = false;
+    bool current() =>
+        identical(_cancelled, cancelled) &&
+        !cancelled.isCompleted &&
+        ownedTurnId != null &&
+        _maintenanceTurn == ownedTurnId &&
+        store.isAgentTurnCurrent(ownedTurnId) &&
+        (activeRoute?.current ?? false);
     try {
-      final reply = await route.call(
-        requestId: requestId,
-        category: category,
-        system: system,
-        input: input,
-        maxTokens: memoryBatchOutputTokens,
-        cancelled: cancelled.future,
-        onDispatchUncertain: () {
-          if (cancelled.isCompleted || !isCurrent()) throw const _MemoryRequestStale();
-          store.markRequestUncertain(requestId);
-          uncertain = true;
-        },
-        onSent: () {
-          if (cancelled.isCompleted || !isCurrent()) throw const _MemoryRequestStale();
-          store.markRequestSent(requestId);
-          dispatched = true;
-        },
-        onUsage: (usage) => store.recordUsage(requestId, usage),
+      final initial = await transport();
+      if (cancelled.isCompleted) return CompanionMemoryWork.stale;
+      if (initial is! CompanionAgentModelTransport || !initial.agentConfigured) {
+        return CompanionMemoryWork.configuration;
+      }
+      if (!initial.current) return CompanionMemoryWork.stale;
+      activeRoute = initial;
+      // The same Store selects whole original sources/cards using this scope's
+      // complete context and real tools. Discovery does not alter its budget.
+      final claim = store.nextAgentMaintenance(
+        kind: kind,
+        offsetMinutes: offsetMinutes,
+        estimateTokens: estimateTokens,
+        forceTail: forceTail,
+        estimateContextTokens: (context) => _inputTokens([
+          {'role': 'user', 'content': jsonEncode(_maintenanceContext(kind, context))},
+        ], CompanionAgentMemoryTools.definitionsFor(originKind: kind, characterId: context['character_id'] as String?)),
       );
-      terminal = reply.terminal;
-      if (cancelled.isCompleted || !isCurrent()) {
-        release('stale');
-        return CompanionMemoryWork.stale;
-      }
-      // Network/configuration failures throw at the route. A complete provider
-      // answer that was cut off by max_tokens is an invalid proposal, not an
-      // empty successful extraction.
-      if (!reply.complete) {
-        release('network');
-        return CompanionMemoryWork.waiting;
-      }
-      if (reply.terminal != 'complete') {
-        invalid();
-        return CompanionMemoryWork.invalid;
-      }
-      final Map<String, Object?> proposal;
-      try {
-        proposal = parse(reply.text);
-      } on FormatException {
-        invalid();
-        return CompanionMemoryWork.invalid;
-      }
-      return commit(proposal) ? CompanionMemoryWork.committed : CompanionMemoryWork.stale;
-    } on _MemoryRequestStale {
-      terminal = dispatched || uncertain ? 'cancelled' : 'not_sent';
-      release('stale');
+      if (claim == null) return CompanionMemoryWork.idle;
+      final completed = (claim['completed_scopes']! as List).cast<String>().toSet();
+      final scopes = (claim['scope_characters']! as List)
+          .cast<String?>()
+          .where((scope) => !completed.contains(scope ?? ''))
+          .toList();
+      if (scopes.isEmpty) return CompanionMemoryWork.idle;
+      final characterId = scopes.first;
+      final claimId = claim['id']! as String;
+      final turn = store.beginAgentMaintenance(kind: kind, claimId: claimId, characterId: characterId);
+      if (turn['closed'] != 0) return CompanionMemoryWork.stale;
+      final turnId = turn['id']! as String;
+      ownedTurnId = turnId;
+      _maintenanceTurn = turnId;
+      _maintenanceControl = turn['control_revision']! as int;
+      final exchanges = <CompanionAgentExchange>[];
+      CompanionAgentModelTransport? firstRoute = initial;
+      final adapter = tools = createTools(turn, current, ({
+        required memory,
+        required turnId,
+        required beforeRevision,
+        required revision,
+      }) {
+        if (!identical(memory.store, store) ||
+            _maintenanceTurn != turnId ||
+            cancelled.isCompleted ||
+            _maintenanceControl != beforeRevision ||
+            store.archive['control_revision'] != revision ||
+            !store.isAgentTurnCurrent(turnId)) {
+          return;
+        }
+        _maintenanceControl = revision;
+        if (beforeRevision != revision) exchanges.clear();
+      });
+      final message = await runCompanionAgentLoop(
+        tools: adapter.bindings,
+        exchanges: exchanges,
+        isCurrent: current,
+        controlRevision: () => _maintenanceControl!,
+        request: () async {
+          if (!current()) return null;
+          // Re-read the same live claim after every own write. In particular,
+          // forget's current cutoff cannot be bypassed by the first input.
+          final fresh = store.beginAgentMaintenance(kind: kind, claimId: claimId, characterId: characterId);
+          if (fresh['id'] != turnId || fresh['closed'] != 0 || !current()) return null;
+          final cards = (fresh['cards']! as List).cast<MemoryRow>();
+          adapter.grantCards(cards);
+          final messages = <Map<String, Object?>>[
+            {'role': 'user', 'content': jsonEncode(_maintenanceContext(kind, fresh))},
+            for (final exchange in exchanges) ...[
+              exchange.assistant.toRequest(),
+              {'role': 'user', 'content': exchange.results},
+            ],
+          ];
+          final route = firstRoute ?? await transport();
+          firstRoute = null;
+          if (!current()) return null;
+          if (route is! CompanionAgentModelTransport || !route.agentConfigured) {
+            throw const CompanionAuxiliaryError(configuration: true, notSent: true, terminal: 'preflight');
+          }
+          activeRoute = route;
+          if (!current()) return null;
+          return _maintenanceRequest(route, adapter, turnId, messages, current);
+        },
+      );
+      if (!current()) return CompanionMemoryWork.stale;
+      complete = message?.stopReason == 'end_turn';
+      return complete ? CompanionMemoryWork.committed : CompanionMemoryWork.invalid;
+    } on _MemoryRequestBudget {
+      return CompanionMemoryWork.waiting;
+    } on DshClosedException {
       return CompanionMemoryWork.stale;
     } on CompanionAuxiliaryError catch (error) {
-      terminal = error.notSent ? 'not_sent' : error.terminal;
-      release(error.configuration ? 'configuration' : 'network');
+      if (cancelled.isCompleted) return CompanionMemoryWork.stale;
       return error.configuration ? CompanionMemoryWork.configuration : CompanionMemoryWork.waiting;
-    } on Object {
-      release('local_error');
-      rethrow;
+    } on CompanionLightError catch (error) {
+      if (cancelled.isCompleted) return CompanionMemoryWork.stale;
+      return (error is CompanionHostError &&
+              error.hostFailure != CompanionHostFailure.requestFailed &&
+              error.hostFailure != CompanionHostFailure.busy) ||
+          const [CompanionLightFailure.noKey, CompanionLightFailure.badKey].contains(error.failure)
+          ? CompanionMemoryWork.configuration
+          : CompanionMemoryWork.waiting;
     } finally {
       try {
-        store.finishRequest(requestId, terminal: terminal);
+        // Each physical request has drained and settled before the claim can
+        // close. The adapter's later close(false) cannot reopen or undo it.
+        if (ownedTurnId != null) store.finishAgentMaintenance(turnId: ownedTurnId, complete: complete);
       } finally {
-        if (!cancelled.isCompleted) cancelled.complete();
-        _cancelled = null;
-        _finished = null;
-        finished.complete();
+        try {
+          tools?.close();
+        } finally {
+          if (!cancelled.isCompleted) cancelled.complete();
+          _maintenanceTurn = null;
+          _maintenanceControl = null;
+          _cancelled = null;
+          _finished = null;
+          finished.complete();
+        }
       }
     }
   }
+
+  Future<CompanionAgentResponse?> _maintenanceRequest(
+    CompanionAgentModelTransport route,
+    CompanionAgentMemoryTools tools,
+    String turnId,
+    List<Map<String, Object?>> messages,
+    bool Function() current,
+  ) async {
+    final definitions = [for (final tool in tools.bindings) tool.definition];
+    final inputTokens = _inputTokens(messages, definitions);
+    // The first request budgets the whole selected context. A continuation
+    // sends its fresh view again, so its allowance counts the added tool
+    // transcript. Compare complete wire bodies with the same current prefix;
+    // do not add estimates of fragments or subtract an obsolete context.
+    // The physical request still reserves its full input cost below.
+    final budgetTokens = messages.length == 1 ? inputTokens : inputTokens - _inputTokens([messages.first], definitions);
+    if (budgetTokens > memoryBatchInputTokens) throw const _MemoryRequestBudget();
+    final id = store.reserveAgentMaintenanceRequest(
+      turnId: turnId,
+      provider: route.provider,
+      model: route.model,
+      inputTokens: inputTokens,
+      outputTokens: memoryBatchOutputTokens,
+    );
+    if (id == null) throw const _MemoryRequestBudget();
+    final request = _request = CompanionAgentModelRequest(id);
+    Map<String, Object?>? receipt;
+    try {
+      final message = await route.readAgent(
+        request: request,
+        system: _maintenancePrompt,
+        messages: messages,
+        tools: definitions,
+        isCurrent: current,
+        maxTokens: memoryBatchOutputTokens,
+        onText: (_) {},
+        onDispatchUncertain: () {
+          if (!current()) throw const DshClosedException('Memory maintenance changed');
+          store.markRequestUncertain(id);
+          request.uncertain = true;
+        },
+        onSent: () {
+          // A late Host observation still belongs to this physical request.
+          store.markRequestSent(id);
+          request.sent = true;
+        },
+        onUsage: (usage) {
+          receipt = usage;
+          store.recordUsage(id, usage);
+          store.finishRequest(id, terminal: usage['terminal']! as String);
+          request.finalized = true;
+        },
+      );
+      return message == null ? null : (message: message, requestId: id);
+    } on CompanionLightError {
+      if (const {400, 404, 413, 422}.contains(receipt?['http_status'])) {
+        throw CompanionAuxiliaryError(
+          configuration: true,
+          notSent: request.notSentProven || (!request.sent && !request.uncertain),
+          terminal: receipt?['terminal'] as String? ?? 'preflight',
+        );
+      }
+      rethrow;
+    } finally {
+      request.client?.close();
+      try {
+        await request.drain();
+      } finally {
+        try {
+          if (request.notSentProven && !request.sent) {
+            store.finishRequest(id, terminal: 'not_sent');
+          } else if (!request.finalized) {
+            store.finishRequest(id, terminal: request.sent || request.uncertain ? 'cancelled' : 'not_sent');
+          }
+        } finally {
+          if (identical(_request, request)) _request = null;
+          request.settled.complete();
+        }
+      }
+    }
+  }
+
+  int _inputTokens(List<Map<String, Object?>> messages, List<CompanionAgentTool> tools) => estimateTokens(
+    jsonEncode(
+      companionAgentRequestBody(
+        system: _maintenancePrompt,
+        messages: messages,
+        tools: tools,
+        maxTokens: memoryBatchOutputTokens,
+      ),
+    ),
+  );
+}
+
+Map<String, Object?> _maintenanceContext(String kind, MemoryRow turn) => {
+  'type': 'memory_maintenance_context',
+  'kind': kind,
+  'processed_at_utc': turn['processed_at_utc'],
+  'character_id': turn['character_id'],
+  'local_day': turn['local_day'],
+  'zone_id': turn['zone_id'],
+  'source_coverage': 'selected_original_messages',
+  // These are new wire maps. The full Store rows remain the source of scope,
+  // revision grants and writes; database bookkeeping is not model context.
+  'sources': [
+    for (final source in (turn['sources']! as List).cast<MemoryRow>())
+      {
+        ..._maintenanceFields(source, const [
+          'id',
+          'source_rev',
+          'first_seq',
+          'event_seq',
+          'role',
+          'scope',
+          'text',
+          'said_at_utc',
+          'offset_minutes',
+          'edited_at_utc',
+          'zone_id',
+          'offset_seconds',
+        ]),
+        'character_id': source['character_id'],
+      },
+  ],
+  'cards': [
+    for (final card in (turn['cards']! as List).cast<MemoryRow>())
+      {
+        ..._maintenanceFields(card, const [
+          'id',
+          'row_rev',
+          'kind',
+          'text',
+          'keywords',
+          'collection',
+          'scope',
+          'eligible',
+          'status',
+          'manual',
+          'pinned',
+          'topic_mode',
+          'source_at_ms',
+          'event_time',
+          'followup',
+          'plan_state',
+          'expires_at_ms',
+          'local_day',
+          'day_zone_id',
+          'aliases',
+        ]),
+        'character_id': card['character_id'],
+        'current_basis_seq': card['current_basis_seq'],
+        if (card['reality_unconfirmed'] == true) 'reality_unconfirmed': true,
+        // Keep every full quote and its original AND/OR group. Only the
+        // repeated outer card_id is omitted from each proof row.
+        'evidence': [
+          for (final proof in (card['evidence']! as List).cast<MemoryRow>())
+            _maintenanceFields(proof, const [
+              'support_group',
+              'message_id',
+              'source_rev',
+              'quote',
+              'role',
+              'scope',
+              'first_seq',
+              'said_at_utc',
+              'offset_minutes',
+              'edited_at_utc',
+            ]),
+        ],
+      },
+  ],
+  'presentations': turn['presentations'],
+};
+
+MemoryRow _maintenanceFields(MemoryRow row, List<String> fields) => {
+  for (final field in fields)
+    if (row[field] != null) field: row[field],
+};
+
+const _maintenancePrompt = '''
+You maintain the companion's phone memory using the supplied memory tools.
+This is a maintenance opportunity, not a new message from the person. Never
+invent a user source, a presentation, a task or an interaction. Use only the
+source IDs and actual card IDs/revisions supplied in this fixed data domain.
+Successful recall or related results can grant further actual IDs. For writes,
+source/sources name supplied original messages; references name supplied cards
+on which the wording depends. The Store binds their revisions; never invent them.
+For event_time, copy first-source wording and use its original said_at_utc and
+offset_minutes, never edit or processing time. Unknown local_date is null; omit
+event_time when there is no evidence.
+Decide meaning from the original context. Shared sources are candidates for
+comparison, not proof that independent facts are the same. Read related cards
+before a correction or deletion and prepare the complete effect set before
+the first write. Preserve independent facts in compound cards. Merge actual
+duplicates with the merge tool; do not simulate a merge with revise/forget.
+At most three distinct cards may change in the entire parent opportunity,
+including its other role contexts. Fewer changes, or none, are valid.
+For organize, the shared completed-day diary has priority. It may use only
+the supplied selected original messages; do not claim to know the whole day.
+Do not copy a private role's assistant words or stories into shared records.
+An impression belongs only to the captured role. Quietly lower the relevance
+of old incidental matters; age alone never authorizes deletion, quiet, expiry
+or rewriting them as past. Ask-later opportunities need an actual invitation.
+Relationship events require a real supplied display receipt and/or original
+user source. Decide whether the shown words were a question and whether the
+person actually answered or confided; do not infer display from punctuation,
+count ordinary chat as confiding, invent a score, or backfill settled days.
+After a control change the new sources/cards replace earlier recall context.
+When finished, end the turn. Your concluding prose is not saved as user chat.
+''';
+
+class _MemoryRequestBudget implements Exception {
+  const _MemoryRequestBudget();
 }
 
 class _MemoryRequestStale implements Exception {

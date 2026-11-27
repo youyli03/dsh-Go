@@ -1,7 +1,8 @@
 // One database per phone folder, shared by both room modes and the memories
-// page. Vitals remain with their existing phone/host owner.
+// page. Relationship facts and maintenance belong to this same phone owner.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dsh_client/dsh_client.dart';
@@ -9,8 +10,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+import 'companion_agent_tools.dart';
 import 'companion_local.dart';
 import 'companion_host_tasks.dart';
+import 'companion_memory_embeddings.dart';
 import 'companion_memory_worker.dart';
 import 'companion_public_lookup.dart';
 import 'companion_widget.dart';
@@ -34,11 +37,17 @@ final companionMemoryOwnerProvider = FutureProvider.family<CompanionMemoryOwner,
 });
 
 class CompanionMemoryOwner extends ChangeNotifier {
-  CompanionMemoryOwner(this.store, this.legacy, {int Function()? nowMilliseconds})
-    : _now = nowMilliseconds ?? (() => DateTime.now().millisecondsSinceEpoch);
+  CompanionMemoryOwner(
+    this.store,
+    this.legacy, {
+    int Function()? nowMilliseconds,
+    CompanionMemoryEmbeddings? embeddings,
+  }) : _now = nowMilliseconds ?? (() => DateTime.now().millisecondsSinceEpoch),
+       embeddings = embeddings ?? CompanionMemoryEmbeddings();
 
   final CompanionMemoryStore store;
   final CompanionLocal legacy;
+  final CompanionMemoryEmbeddings embeddings;
   final int Function() _now;
   late final lookups = CompanionLookups(
     store: store,
@@ -54,29 +63,135 @@ class CompanionMemoryOwner extends ChangeNotifier {
   final Map<String, Future<void>> _usageReads = {};
   final Map<String, ({int at, int delay})> _usageAttempts = {};
   CompanionMemoryWorker? _worker;
-  CompanionMemoryTransport? Function()? _route;
+  FutureOr<CompanionMemoryTransport?> Function()? _route;
   Object? _room;
+  bool _roomReady = false;
   bool _disposed = false;
+  Timer? _rawEraseExpiryTimer;
+  String? _rawEraseTimerId;
+  int? _rawEraseTimerDeadline;
+  int? _rawEraseTimerControlRevision;
+
+  bool get working => _worker?.busy == true;
+
+  /// The Store owns the one plan. A projection never offers it or notifies
+  /// listeners from inside a widget build.
+  CompanionPendingRawErase? pendingRawErase(Object room, {required String? characterId}) =>
+      _disposed || !identical(_room, room) ? null : store.pendingRawErase(characterId: characterId);
+
+  CompanionRawEraseResult markRawEraseOffered(Object room, String id, {required String? characterId}) {
+    _checkRawEraseRoom(room);
+    final result = store.markRawEraseOffered(id, characterId: characterId);
+    if (result.state == 'awaiting') {
+      final pending = store.pendingRawErase(characterId: characterId);
+      if (pending != null && pending.id == id) _watchRawEraseExpiry(pending);
+    }
+    return _rawEraseChanged(result);
+  }
+
+  CompanionRawEraseResult confirmRawErase(Object room, String id, {required String? characterId}) {
+    _checkRawEraseRoom(room);
+    return _rawEraseChanged(store.confirmRawErase(id, characterId: characterId));
+  }
+
+  CompanionRawEraseResult declineRawErase(Object room, String id, {required String? characterId}) {
+    _checkRawEraseRoom(room);
+    return _rawEraseChanged(store.declineRawErase(id, characterId: characterId));
+  }
+
+  void _checkRawEraseRoom(Object room) {
+    if (_disposed || !identical(_room, room)) throw const DshClosedException('Companion memory room closed');
+  }
+
+  CompanionRawEraseResult _rawEraseChanged(CompanionRawEraseResult result) {
+    if (result.id == _rawEraseTimerId && result.state != 'awaiting' && result.state != 'deferred') {
+      _cancelRawEraseExpiry();
+    }
+    // Confirmation is the person's external control commit, never an
+    // acknowledgement on behalf of a closed model/tool turn.
+    changed();
+    return result;
+  }
+
+  void _watchRawEraseExpiry(CompanionPendingRawErase pending) {
+    final deadline = pending.expiresAtUtcMs;
+    if (deadline == null || (pending.id == _rawEraseTimerId && deadline == _rawEraseTimerDeadline)) return;
+    _cancelRawEraseExpiry();
+    final id = _rawEraseTimerId = pending.id;
+    _rawEraseTimerDeadline = deadline;
+    _rawEraseTimerControlRevision = store.archive['control_revision']! as int;
+    final delay = deadline - _now();
+    _rawEraseExpiryTimer = Timer(Duration(milliseconds: delay > 0 ? delay : 0), () {
+      if (_disposed || _rawEraseTimerId != id || _rawEraseTimerDeadline != deadline) return;
+      _cancelRawEraseExpiry();
+      // The real getter/action still validates the clock and every Store
+      // fence. This timer only asks the current UI to refresh its projection.
+      changed();
+    });
+  }
+
+  void _cancelRawEraseExpiry() {
+    _rawEraseExpiryTimer?.cancel();
+    _rawEraseExpiryTimer = null;
+    _rawEraseTimerId = null;
+    _rawEraseTimerDeadline = null;
+    _rawEraseTimerControlRevision = null;
+  }
+
+  bool invalidateRawErase(Object room, {bool notify = true}) {
+    // An old Visit may close after another Visit entered this phone Owner.
+    // Do not even cancel the later plan's timer before checking its identity.
+    if (_disposed || !identical(_room, room)) return false;
+    final invalidated = store.invalidateRawErase();
+    _cancelRawEraseExpiry();
+    if (invalidated && notify) changed();
+    return invalidated;
+  }
 
   void enter(
     Object room, {
-    required CompanionMemoryTransport? Function() transport,
+    required FutureOr<CompanionMemoryTransport?> Function() transport,
     required int Function(String) estimateTokens,
+    String? characterId,
+    bool ready = true,
   }) {
     if (!identical(_room, room)) _worker?.cancel();
     _room = room;
+    _roomReady = ready;
     _route = transport;
+    // A deferred record may outlive an external window's Visit. Reuse only
+    // its original id and the current real role; entering does not offer it.
+    if (store.pendingRawErase(characterId: characterId) == null) _cancelRawEraseExpiry();
     _worker ??= CompanionMemoryWorker(
       store: store,
       transport: () => _route!(),
       nowMilliseconds: _now,
       estimateTokens: estimateTokens,
+      maintenanceTools: (turn, current, onCommitted) => CompanionAgentMemoryTools.maintenance(
+        memory: this,
+        turn: turn,
+        isCurrent: current,
+        onMaintenanceCommitted: onCommitted,
+        forgottenNotice: '',
+        semanticRecall: (query) => recallIds(query, characterId: turn['character_id'] as String?, isCurrent: current),
+      ),
     );
   }
 
-  Future<CompanionMemoryWork> extract(Object room, {bool forceTail = false}) async {
-    if (!identical(_room, room)) return CompanionMemoryWork.idle;
-    final result = await _worker!.extract(forceTail: forceTail);
+  /// A Visit owns its close/invalidation identity before initialization awaits,
+  /// but maintenance keeps its original start point after those awaits finish.
+  void finishOpening(Object room) {
+    if (_disposed || !identical(_room, room)) return;
+    _roomReady = true;
+    changed();
+  }
+
+  bool acceptsMaintenanceControl(Object room, int revision) =>
+      identical(_room, room) && _roomReady && _worker?.acceptsControl(revision) == true;
+
+  Future<CompanionMemoryWork> extract(Object room, {bool forceTail = false, int? offsetMinutes}) async {
+    if (!identical(_room, room) || !_roomReady) return CompanionMemoryWork.idle;
+    final result = await _worker!.extract(forceTail: forceTail, offsetMinutes: offsetMinutes);
     if (result == CompanionMemoryWork.committed) changed();
     return result;
   }
@@ -87,25 +202,37 @@ class CompanionMemoryOwner extends ChangeNotifier {
     required String persona,
     required int offsetMinutes,
     required bool Function() isCurrent,
-  }) => identical(_room, room)
+  }) => identical(_room, room) && _roomReady
       ? _worker!.followup(captured, persona: persona, offsetMinutes: offsetMinutes, isCurrent: isCurrent)
       : Future.value(null);
 
-  Future<CompanionMemoryWork> consolidate(Object room) async {
-    if (!identical(_room, room)) return CompanionMemoryWork.idle;
+  Future<CompanionMemoryWork> consolidate(Object room, {int? offsetMinutes}) async {
+    if (!identical(_room, room) || !_roomReady) return CompanionMemoryWork.idle;
     final before = store.archive['memory_revision'];
     try {
-      return await _worker!.consolidate();
+      return await _worker!.consolidate(offsetMinutes: offsetMinutes);
     } finally {
-      // Local exact merges can commit even when a later cloud step cannot run.
+      // A confirmed tool write survives a later network or budget stop.
       if (!_disposed && store.archive['memory_revision'] != before) changed();
     }
   }
 
-  void leave(Object room) {
-    if (!identical(_room, room)) return;
+  void leave(Object room, {String? characterId, bool actualRoomLeave = false}) {
+    if (_disposed || !identical(_room, room)) return;
+    // A notification/float that never offered confirmation may retire while
+    // this phone Owner survives. The next real room reads the same deferred
+    // id. Actual room departure and an already offered record both revoke it.
+    final pending = actualRoomLeave ? null : store.pendingRawErase(characterId: characterId);
+    final invalidated = (actualRoomLeave || pending == null || pending.expiresAtUtcMs != null) &&
+        store.invalidateRawErase();
+    _cancelRawEraseExpiry();
+    _roomReady = false;
     _worker?.cancel();
     _room = null;
+    // A Visit leaves from inside its Page's dispose, while other pages over it
+    // may be coming down in the same frame. Only a plan actually revoked here
+    // is news to the listeners that remain; an ordinary leave stays quiet.
+    if (invalidated) changed();
   }
 
   void cancelWork() => _worker?.cancel();
@@ -153,9 +280,10 @@ class CompanionMemoryOwner extends ChangeNotifier {
               ? first.compareTo(second)
               : (a['observed_at_ms'] as int).compareTo(b['observed_at_ms'] as int);
         });
-    // Bound one read opportunity and let the next room tick visit older roots.
-    // Completed immutable receipts leave the queue even when fees are unknown.
-    for (final delivery in pending.take(4)) {
+    // Read opportunities only come on opening and connection changes now, so
+    // one visits every root. Completed immutable receipts leave the queue even
+    // when fees are unknown.
+    for (final delivery in pending) {
       if (_disposed) break;
       final id = delivery['id']! as String;
       final attempted = _now();
@@ -230,6 +358,128 @@ class CompanionMemoryOwner extends ChangeNotifier {
     );
   }
 
+  Future<List<String>?> recallIds(
+    String query, {
+    String? explicitUserInput,
+    required String? characterId,
+    required bool Function() isCurrent,
+  }) async {
+    final revision = store.archive['control_revision'];
+    bool current() => !_disposed && isCurrent() && store.archive['control_revision'] == revision;
+    final ranked = await embeddings.rank(
+      store: store,
+      characterId: characterId,
+      query: query,
+      explicitInput: explicitUserInput,
+      isCurrent: current,
+    );
+    if (!current()) throw const CompanionMemoryRetrievalCancelled();
+    return ranked == null ? null : [for (final row in ranked) row['id']! as String];
+  }
+
+  /// Fixed impression and the last two completed diary dates are separate
+  /// from card ranking. A vector result cannot crowd those layers out.
+  /// Observation text can guide relevance; only an actual user source supplies
+  /// [explicitUserInput] for the one-selection quiet exception.
+  Future<MemorySelection> selectForAgent(
+    String input, {
+    required String? characterId,
+    required int offsetMinutes,
+    required bool Function() isCurrent,
+    String? explicitUserInput,
+  }) async {
+    final revision = store.archive['control_revision']! as int;
+    bool current() => !_disposed && isCurrent() && store.archive['control_revision'] == revision;
+    // Without the model rank would read every candidate only to tell [] from
+    // null; the read below is the one the selection uses, so skip the first.
+    final ranked = embeddings.knownUnavailable
+        ? null
+        : await embeddings.rank(
+            store: store,
+            characterId: characterId,
+            query: input,
+            explicitInput: explicitUserInput,
+            isCurrent: current,
+          );
+    if (!current()) throw const CompanionMemoryRetrievalCancelled();
+    final cards = store.memoryRetrievalCandidates(characterId: characterId, input: explicitUserInput);
+    // Scope resolved the invitation in the whole domain. Its matching row
+    // can belong to a fixed layer, outside these returned ordinary candidates.
+    final explicit = <String>{
+      for (final card in cards)
+        if (card['topic_mode'] == 'never') card['topic_id']! as String,
+    };
+    final selection = ranked == null
+        ? selectMemoryContext(cards, input: input, nowMs: _now(), controlRevision: revision, explicitTopicIds: explicit)
+        : selectRankedMemoryContext(
+            cards,
+            rankedIds: [for (final row in ranked) row['id']! as String],
+            nowMs: _now(),
+            controlRevision: revision,
+            explicitTopicIds: explicit,
+          );
+    final local = DateTime.fromMillisecondsSinceEpoch(_now() + offsetMinutes * 60000, isUtc: true);
+    final today = DateTime.utc(local.year, local.month, local.day);
+    final firstDay = today.subtract(const Duration(days: 2)).toIso8601String().substring(0, 10);
+    final todayKey = today.toIso8601String().substring(0, 10);
+    final fixed = store.memoryFixedLayerCards(
+      characterId: characterId,
+      fromDay: firstDay,
+      beforeDay: todayKey,
+      explicitUserInput: explicitUserInput,
+    );
+    final diaries = fixed.where((row) => row['layer'] == 'diary').toList()
+      ..sort((a, b) => (a['local_day']! as String).compareTo(b['local_day']! as String));
+    final selected = [
+      ...fixed.where((row) => row['layer'] == 'impression'),
+      for (final id in selection.ids) cards.singleWhere((row) => row['id'] == id),
+      ...diaries,
+    ];
+    return MemorySelection(
+      block: jsonEncode({
+        'type': 'companion_memory',
+        'version': 3,
+        'scope': 'real',
+        'items': [
+          for (final row in selected)
+            {
+              'id': row['id'],
+              'kind': row['kind'],
+              'layer': row['layer'],
+              'collection': row['collection'],
+              'text': row['text'],
+              if (row['source'] != null) 'source': row['source'],
+              if (row['local_day'] != null) 'local_day': row['local_day'],
+            },
+        ],
+      }),
+      ids: [for (final row in selected) row['id']! as String],
+      controlRevision: revision,
+    );
+  }
+
+  /// The SDK supplies the stage and recovery fact. Tone follows real shared
+  /// history and the person's preferred form of address; initiative consent stays.
+  String relationshipContext(String? characterId, {bool forInitiative = false}) {
+    if (characterId == null) return '';
+    final affinity = store.companionAffinity(characterId: characterId);
+    final tier = affinity?['tier'] as int? ?? 0;
+    return '\n${jsonEncode({
+      'type': 'companion_relationship',
+      'stage': const ['just_met', 'familiar', 'friends', 'close', 'very_close', 'inseparable'][tier],
+      'recovering': affinity != null && (affinity['score_milli']! as int) < (affinity['peak_milli']! as int),
+      'guidance': 'Let familiarity shape warmth, playfulness and how much of your own day you share. '
+          'Respect the person\'s preferred form of address. You may naturally choose a nickname based on real interactions, '
+          'but do not present a new nickname as previously agreed or invent shared events. '
+          'When returning after absence, acknowledge it gently; no fixed stage unlocks a scripted sentence.',
+      if (forInitiative) 'initiative': 'This is an optional opportunity, not a demand to speak. '
+            'When newly acquainted, prefer silent if asking now would presume familiarity. '
+            'As genuine familiarity grows, be more willing to make a natural small approach. '
+            'Still choose silent when the question would intrude or repeat what was already said. '
+            'The person\'s chosen pace, quiet hours and invitation limits always remain in force.',
+    })}';
+  }
+
   /// A control transaction leaves this pending until native storage confirms
   /// both fields cleared. Room and memory page share the same draining write.
   Future<bool> clearWidget(CompanionWidget widget) =>
@@ -259,14 +509,28 @@ class CompanionMemoryOwner extends ChangeNotifier {
     };
   }
 
+  void clearNoticeMemories() {
+    store.clearNoticeMemories();
+    changed();
+  }
+
   void changed() {
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    if (_rawEraseTimerControlRevision != null &&
+        store.archive['control_revision'] != _rawEraseTimerControlRevision) {
+      _cancelRawEraseExpiry();
+    }
+    notifyListeners();
   }
 
   @override
   void dispose() {
     _disposed = true;
+    store.invalidateRawErase();
+    _cancelRawEraseExpiry();
     _room = null;
+    _roomReady = false;
+    embeddings.dispose();
     hostTasks.closeForegrounds();
     final pending = <Future<void>>[
       ..._receipts,

@@ -53,6 +53,7 @@ class ChatHeader extends ConsumerStatefulWidget {
     super.key,
     required this.title,
     required this.status,
+    this.sessionStatus,
     this.detail,
     this.trailing,
     this.onOpenDrawer,
@@ -65,7 +66,10 @@ class ChatHeader extends ConsumerStatefulWidget {
   final String title;
   final HeaderStatus status;
 
-  /// What follows the status under the title (a phone: the workspace). Shortens first.
+  /// Session activity or sync state, separate from the remote link status.
+  final HeaderStatus? sessionStatus;
+
+  /// What follows the status under the title when no session status is shown. Shortens first.
   final String? detail;
 
   /// 右侧件(模型胶囊 [ModelChip])。需要传 `grouped: true` 与顶栏共享一次
@@ -130,32 +134,12 @@ class _ChatHeaderState extends ConsumerState<ChatHeader> {
     final colors = theme.colorScheme;
     final dsh = DshColors.of(context);
     final themeStyle = DshThemeStyle.of(context);
-    final GlassStyle? headerButtonStyle = switch (themeStyle.components.headerStyle) {
-      ThemeHeaderStyle.glass => null,
-      ThemeHeaderStyle.ghost => const GlassStyle(
-        fill: Colors.transparent,
-        fallbackFill: Colors.transparent,
-        hairline: Colors.transparent,
-        rim: Colors.transparent,
-      ),
-      ThemeHeaderStyle.outlined => GlassStyle(
-        fill: Colors.transparent,
-        fallbackFill: Colors.transparent,
-        hairline: colors.outlineVariant,
-        hairlineWidth: 1.0,
-        rim: Colors.transparent,
-      ),
-      ThemeHeaderStyle.minimal => GlassStyle(
-        fill: colors.surfaceContainerLow.withValues(alpha: 0.72),
-        fallbackFill: colors.surfaceContainerLow,
-        hairline: Colors.transparent,
-        rim: Colors.transparent,
-      ),
-    };
+    final headerButtonStyle = themeStyle.headerGlass(colors);
     final top = MediaQuery.paddingOf(context).top;
     final barHeight = ChatHeader.barHeightOf(context);
     final pillHeight = ChatHeader.pillHeightOf(context);
-    final titleStyle = theme.textTheme.titleSmall?.copyWith(fontSize: 15, height: 1.3);
+    final baseTitleStyle = theme.textTheme.titleSmall?.copyWith(fontSize: 15, height: 1.3);
+    final titleStyle = baseTitleStyle == null ? null : themeStyle.headerTitleTextStyle(baseTitleStyle);
     final statusStyle = theme.textTheme.labelSmall?.copyWith(fontSize: 11, height: 1.25);
     final titleFloor = _titleFloor(context, statusStyle);
     // The schedule clock widens the pill by this much over its plain right
@@ -264,8 +248,15 @@ class _ChatHeaderState extends ConsumerState<ChatHeader> {
                                           ),
                                         ],
                                       ),
-                                      detail: switch (widget.detail) {
-                                        final detail? => FluidTextSwap(
+                                      detail: switch ((widget.sessionStatus, widget.detail)) {
+                                        (final session?, _) => _StatusLabel(
+                                          status: session,
+                                          prefix: ' · ',
+                                          style: statusStyle?.copyWith(
+                                            color: session.tone == StatusTone.warn ? dsh.warning : dsh.textTertiary,
+                                          ),
+                                        ),
+                                        (_, final detail?) => FluidTextSwap(
                                           value: detail,
                                           child: Text(
                                             ' · $detail',
@@ -274,7 +265,7 @@ class _ChatHeaderState extends ConsumerState<ChatHeader> {
                                             style: statusStyle?.copyWith(color: dsh.textTertiary),
                                           ),
                                         ),
-                                        null => const SizedBox.shrink(),
+                                        _ => const SizedBox.shrink(),
                                       },
                                     ),
                                   ],
@@ -742,10 +733,11 @@ class _RenderStatusLine extends RenderBox
 }
 
 class _StatusLabel extends StatelessWidget {
-  const _StatusLabel({required this.status, required this.style});
+  const _StatusLabel({required this.status, required this.style, this.prefix = ''});
 
   final HeaderStatus status;
   final TextStyle? style;
+  final String prefix;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -755,7 +747,7 @@ class _StatusLabel extends StatelessWidget {
     excludeSemantics: true,
     child: FluidTextSwap(
       value: status.label,
-      child: Text(status.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
+      child: Text('$prefix${status.label}', maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
     ),
   );
 }

@@ -7,12 +7,17 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dsh_app/companion/companion_pack.dart';
+import 'package:dsh_app/companion/companion_keeper.dart';
+import 'package:dsh_app/companion/companion_light.dart';
 import 'package:dsh_app/companion/companion_memory.dart';
+import 'package:dsh_app/companion/companion_memory_worker.dart';
 import 'package:dsh_app/companion/companion_state.dart';
 import 'package:dsh_app/l10n/gen/app_localizations.dart';
 import 'package:dsh_app/state/companion_agent_state.dart';
 import 'package:dsh_app/state/connection_state.dart';
 import 'package:dsh_app/state/hosts_state.dart';
+import 'package:dsh_app/state/models_state.dart';
+import 'package:dsh_app/state/sessions_state.dart';
 import 'package:dsh_app/state/settings_state.dart';
 import 'package:dsh_app/ui/companion/companion_chrome.dart';
 import 'package:dsh_app/ui/companion/companion_page.dart';
@@ -28,6 +33,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import 'companion_test_settle.dart';
+import 'phone_keeper_fake.dart';
 
 const _session = 'synthetic-greeting-session';
 const _now = 1793937600000;
@@ -38,6 +44,9 @@ class _Bridge extends DshConnection {
   final posts = <Map<String, Object?>>[];
   final getPaths = <String>[];
   final postPaths = <String>[];
+  final auxiliarySessions = <String?>[];
+  final firstAuxiliary = Completer<void>();
+  bool selectionChanged = false;
   DshHttpResponse json(Object body, [int status = 200]) =>
       DshHttpResponse(status, 'application/json', Uint8List.fromList(utf8.encode(jsonEncode(body))));
   int revision = 0;
@@ -70,6 +79,11 @@ class _Bridge extends DshConnection {
     bool followRedirects = true,
     int? maxResponseBytes,
   }) async {
+    if (path == '$dshGoCompanionPath/auxiliary') {
+      auxiliarySessions.add(query?['sessionId']);
+      if (!firstAuxiliary.isCompleted) firstAuxiliary.complete();
+      if (selectionChanged) return json({'error': {'code': 'companion/auxiliary-selection-changed'}}, 409);
+    }
     if (path == '$dshGoCompanionPath/memories') {
       return json({
         'v': 1,
@@ -122,6 +136,7 @@ class _Client extends DshClient {
   Completer<SessionProjections?>? projectionRead;
   final projectionStarted = Completer<void>();
   int projectionCalls = 0;
+  bool dropHostOnProjection = false;
   late final _fakeMux = _Mux(carrier);
   @override
   _Mux get mux => _fakeMux;
@@ -134,6 +149,7 @@ class _Client extends DshClient {
   Future<SessionProjections?> projections(String sessionId) async {
     projectionCalls++;
     if (!projectionStarted.isCompleted) projectionStarted.complete();
+    if (dropHostOnProjection) throw const DshClosedException('synthetic Host disconnected before sending');
     return projectionRead?.future ?? SessionProjections.empty;
   }
 }
@@ -148,10 +164,42 @@ class _Settings extends SettingsController {
   AppSettings build() => const AppSettings(loaded: true, apiKey: 'synthetic-test-key');
 }
 
+// Only the public phone storage boundary is held. The real Page/Agent still
+// decides when to greet, retires newer intent, and serializes its visit event.
+class _Phone extends FakePhoneKeeper {
+  _Phone() : super(state: FakePhoneKeeper.snapshotOf(closeness: 0.33));
+
+  final readStarted = Completer<void>();
+  final initialRead = Completer<CompanionSnapshot?>();
+  final writes = <(CompanionSnapshot, String)>[];
+  int reads = 0;
+
+  @override
+  Future<CompanionSnapshot?> snapshot() {
+    reads++;
+    if (!readStarted.isCompleted) readStarted.complete();
+    return initialRead.future;
+  }
+
+  void release() {
+    if (!initialRead.isCompleted) initialRead.complete(state);
+  }
+
+  @override
+  Future<CompanionSnapshot> event(CompanionSnapshot read, String type) {
+    writes.add((read, type));
+    return super.event(read, type);
+  }
+}
+
 class _Room {
   _Room(this.root);
   final Directory root;
   final bridge = _Bridge();
+  int sessionControllers = 0;
+  final fallbackRead = Completer<void>();
+  final phone = _Phone();
+  Directory? phoneDirectory;
   late final client = _Client(bridge);
   final commands = <(String, Map<String, Object?>)>[];
   CompanionStageEvents? events;
@@ -164,6 +212,7 @@ class _Room {
   final replies = <StreamController<List<int>>>[];
   http.Client newClient() => MockClient.streaming((request, body) async {
     asked.add(jsonDecode(await body.bytesToString()) as Map<String, Object?>);
+    if (bridge.selectionChanged) return http.StreamedResponse(const Stream<List<int>>.empty(), 503);
     final reply = StreamController<List<int>>();
     replies.add(reply);
     return http.StreamedResponse(reply.stream, 200, headers: {'content-type': 'text/event-stream; charset=utf-8'});
@@ -208,6 +257,7 @@ class _Room {
       await tester.pump();
     }
     expect(asked, hasLength(before + 1));
+    if (client.dropHostOnProjection) expect(client.projectionCalls, 1);
     await flush(tester);
   }
 
@@ -215,31 +265,66 @@ class _Room {
   L10n l10n(WidgetTester tester) => L10n.of(tester.element(find.byType(CompanionPage)));
 
   void expectVisitAndVitals() {
-    expect(bridge.getPaths, [dshGoCompanionPath]);
-    expect(bridge.postPaths, ['$dshGoCompanionPath/events']);
-    expect(bridge.posts, [
-      {'storeId': 'synthetic-greeting-store', 'expectedRevision': 0, 'type': 'visit'},
-    ]);
+    expect(phone.reads, 1);
+    expect(phone.writes.map((write) => write.$2), ['visit']);
+    expect(phone.writes.single.$1.revision, 0);
+    expect(phone.state!.revision, 1);
+    expect(bridge.posts, isEmpty);
+    final vitals = phone.state!.vitals;
     expect(commands.where((command) => command.$1 == 'vitals').last.$2, {
-      'valence': 0.81,
-      'energy': 0.42,
-      'closeness': 0.33,
+      'valence': vitals.valence,
+      'energy': vitals.energy,
+      // The keeper's compatibility closeness is not the phone DB's v2 tier.
+      'closeness': 0.0,
     });
   }
 
-  Future<void> open(WidgetTester tester, {void Function(CompanionMemoryOwner)? seed}) async {
+  Future<void> open(
+    WidgetTester tester, {
+    void Function(CompanionMemoryOwner)? seed,
+    bool dropHostOnSend = false,
+    bool bindRole = false,
+    bool bindWithMemory = false,
+  }) async {
     this.tester = tester;
+    addTearDown(() => close(tester));
     Directory('${root.path}/pack/runtime').createSync(recursive: true);
     Directory('${root.path}/pack/character').createSync(recursive: true);
     File('${root.path}/pack/runtime/live2dcubismcore.min.js').writeAsStringSync('core');
     File('${root.path}/pack/character/index.json').writeAsStringSync('[]');
+    final store = CompanionPackStore(root);
+    final prefs = await SharedPreferences.getInstance();
+    client.dropHostOnProjection = dropHostOnSend;
+    if (bindRole || bindWithMemory || dropHostOnSend) {
+      final role = (await tester.runAsync(store.characterIdentity))!.key;
+      expect(role, startsWith('local:'));
+      final hostKey = '${HostRef.local.kind.name}:${HostRef.local.id}';
+      final saved = jsonDecode(prefs.getString('companion_sessions')!) as Map<String, Object?>;
+      saved['character:${jsonEncode(hostKey)}:${jsonEncode(role)}'] = {
+        if (bindWithMemory) ...(saved[hostKey]! as Map<String, Object?>),
+        'id': 'existing-role-session', 'full': true,
+      };
+      await prefs.setString('companion_sessions', jsonEncode(saved));
+    }
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           activeHostProvider.overrideWith(_Host.new),
+          sessionsProvider.overrideWith(() {
+            sessionControllers++;
+            return SessionsController();
+          }),
+          companionAgentMemoryTransportProvider.overrideWith((ref) {
+            if (!fallbackRead.isCompleted) fallbackRead.complete();
+            return CompanionLightMemoryTransport(apiKey: () => '');
+          }),
           activeConnectionProvider.overrideWithValue(AsyncData(HostConnection(client: client, isLocal: true))),
           settingsProvider.overrideWith(_Settings.new),
           companionLightClientProvider.overrideWithValue(newClient),
+          companionPhoneKeeperProvider.overrideWithValue((directory) {
+            phoneDirectory = directory;
+            return phone;
+          }),
         ],
         child: MaterialApp(
           theme: buildDarkTheme(),
@@ -247,7 +332,7 @@ class _Room {
           supportedLocales: L10n.supportedLocales,
           locale: const Locale('zh'),
           home: CompanionPage(
-            storeOverride: CompanionPackStore(root),
+            storeOverride: store,
             stageController: CompanionStageController(sink: (type, args) => commands.add((type, args))),
             stageBuilder: (_, next) {
               events = next;
@@ -264,22 +349,31 @@ class _Room {
     expect(events, isNotNull);
     container = ProviderScope.containerOf(tester.element(find.byType(CompanionPage)));
     container.read(companionSessionsProvider);
-    memory = (await tester.runAsync(() => container.read(companionMemoryOwnerProvider(root.absolute.path).future)))!;
+    memory = await settleMixed(tester, container.read(companionMemoryOwnerProvider(root.absolute.path).future));
     await tester.pump();
     await settleMixed(tester, memory.migrateLocal());
     seed?.call(memory);
     await flush(tester);
     expect(container.read(companionSessionsProvider.notifier).of(HostRef.local)?.sessionId, _session);
     events!.onReady();
+    await settleMixed(tester, phone.readStarted.future);
     await flush(tester);
-    // The room no longer watches the Host chat; the delayed arrival read is
-    // still the actual Host keeper's first snapshot.
-    expect(bridge.getCount, 1);
+    expect(phone.reads, 1);
+    expect(phone.initialRead.isCompleted, isFalse);
+    final directory = phoneDirectory!;
+    expect(directory.parent.path, '${root.path}/activity');
+    final role = directory.uri.pathSegments.where((part) => part.isNotEmpty).last;
+    expect(memory.store.companionCharacter(role)?['source_key'], startsWith('local:'));
     commands.clear();
   }
 
+  bool closed = false;
+
   Future<void> close(WidgetTester tester) async {
+    if (closed) return;
+    closed = true;
     await tester.pumpWidget(const SizedBox());
+    phone.release();
     await tester.pump();
     bridge.release();
     final read = client.projectionRead;
@@ -327,8 +421,12 @@ void main() {
     final room = _Room(temporary);
     await room.open(tester);
     try {
+      await settleMixed(tester, room.fallbackRead.future);
+      expect(room.sessionControllers, 0);
+      expect(room.bridge.auxiliarySessions, isEmpty);
+      expect(room.client.projectionCalls, 0);
       expect(room.speech(tester), isNull);
-      room.bridge.release();
+      room.phone.release();
       await flush(tester);
       // This pack has no name: she introduces herself without one.
       expect(room.speech(tester), room.l10n(tester).companionGreetFirstNameless);
@@ -339,6 +437,93 @@ void main() {
     }
   });
 
+  testWidgets('arrival maintenance reads the saved role selection without ensuring it', (tester) async {
+    final room = _Room(temporary);
+    await room.open(tester, bindRole: true);
+    await settleMixed(tester, room.bridge.firstAuxiliary.future);
+    expect(room.bridge.auxiliarySessions, everyElement('existing-role-session'));
+    expect(room.sessionControllers, 0);
+    expect(room.client.projectionCalls, 0);
+    await room.close(tester);
+  });
+
+  testWidgets('a retired selection during discovery reserves no phone attempt', (tester) async {
+    final room = _Room(temporary);
+    await room.open(tester, bindRole: true);
+    try {
+      await settleMixed(tester, room.bridge.firstAuxiliary.future);
+      final agent = room.container.read(companionAgentProvider);
+      final before = room.bridge.auxiliarySessions.length;
+      final requests = room.memory.store.requests().map((row) => row['id']).toSet();
+      final phonePosts = room.asked.length;
+      room.bridge.selectionChanged = true;
+      final source = room.memory.store.submitMessage(
+        id: 'auxiliary-discovery-changed', sessionId: 'existing-role-session', text: '这轮已经换了模型。',
+        saidAtUtc: _now, offsetMinutes: 0,
+      );
+      await settleMixed(tester, agent.say(memory: room.memory, source: source, system: 'test',
+        tools: const [], isCurrent: () => true));
+      expect(room.bridge.auxiliarySessions.skip(before), contains('existing-role-session'));
+      expect(agent.error, isA<CompanionHostError>().having(
+        (error) => error.hostFailure, 'reason', CompanionHostFailure.selectionChanged,
+      ));
+      expect(room.asked.length, phonePosts);
+      expect(room.memory.store.requests().where((row) => row['category'] == 'chat' && !requests.contains(row['id'])),
+          isEmpty);
+    } finally {
+      await room.close(tester);
+    }
+  });
+
+  for (final dropped in [false, true]) {
+    testWidgets('same-client reconnect while binding returns a retryable draft (read failed: $dropped)', (tester) async {
+      final room = _Room(temporary);
+      await room.open(tester, bindWithMemory: true);
+      try {
+        final read = room.client.projectionRead = Completer<SessionProjections?>();
+        final owner = room.container;
+        final agent = owner.read(companionAgentProvider);
+        final scope = owner.read(modelSelectionScopeProvider);
+        const words = '连接重建时保留这一句。';
+        await tester.enterText(find.byType(TextField), words);
+        tester.widget<CompanionComposer>(find.byType(CompanionComposer)).onSend();
+        await settleMixed(tester, room.client.projectionStarted.future);
+        expect(agent.running, isTrue);
+        expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+        final ended = Completer<void>();
+        void changed() {
+          if (!agent.running && !ended.isCompleted) ended.complete();
+        }
+        agent.addListener(changed);
+        try {
+          room.client.mux.connection.add(DshConnectionState.reconnecting);
+          await flush(tester);
+          expect(owner.read(activeConnectionProvider).value!.client, same(room.client));
+          expect(owner.read(modelSelectionScopeProvider), isNot(same(scope)));
+          if (dropped) {
+            read.completeError(const DshClosedException('connection was lost during the read'));
+          } else {
+            read.complete(SessionProjections.empty);
+          }
+          await settleMixed(tester, ended.future);
+          await flush(tester);
+          expect(agent.error, isA<CompanionHostError>().having(
+            (failure) => failure.hostFailure, 'reason', CompanionHostFailure.disconnected,
+          ));
+          expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, words);
+          expect(room.speech(tester), room.l10n(tester).companionLocalDisconnected);
+          expect(room.memory.store.messages().where((row) => row['text'] == words), hasLength(1));
+          expect(room.asked, isEmpty);
+          expect(room.bridge.postPaths, isNot(contains('/api/session/prompt')));
+        } finally {
+          agent.removeListener(changed);
+        }
+      } finally {
+        await room.close(tester);
+      }
+    });
+  }
+
   testWidgets('a touch supersedes a pending greeting without dropping visit state', (tester) async {
     final room = _Room(temporary);
     await room.open(tester);
@@ -347,7 +532,7 @@ void main() {
       await tester.pump();
       final line = room.speech(tester);
       expect(line, isNotNull);
-      room.bridge.release();
+      room.phone.release();
       await flush(tester);
       room.expectVisitAndVitals();
       expect(room.speech(tester), line);
@@ -365,14 +550,14 @@ void main() {
       room.events!.onObject('snack');
       await tester.pump(const Duration(milliseconds: 100));
       expect(room.speech(tester), isNull);
-      room.bridge.release();
+      room.phone.release();
       await flush(tester);
       final afterRead = room.speech(tester);
       room.expectVisitAndVitals();
       await tester.pump(const Duration(milliseconds: 1700));
       await tester.pump();
       debugPrint(
-        '[C442 SNACK] ${jsonEncode({'afterRead': afterRead, 'afterTimer': room.speech(tester), 'posts': room.bridge.posts})}',
+        '[C442 SNACK] ${jsonEncode({'afterRead': afterRead, 'afterTimer': room.speech(tester), 'phoneEvents': room.phone.writes.map((write) => write.$2).toList()})}',
       );
       expect(room.speech(tester), isIn([l10n.companionSnack1, l10n.companionSnack2, l10n.companionSnack3]));
       expect(afterRead, isNull);
@@ -382,16 +567,14 @@ void main() {
     }
   });
 
-  // The send is accepted and its model request is out; no words have come
-  // back yet. (The Host session read this once waited on is gone: the room's
-  // chat is the phone loop in full mode too.)
+  // These Full-mode timing races hold the phone response after Host preflight fails.
   testWidgets('an accepted send awaiting her first words already supersedes the greeting', (tester) async {
     final room = _Room(temporary);
-    await room.open(tester);
+    await room.open(tester, dropHostOnSend: true);
     try {
       await room.send('稍等这一句');
       expect(room.running, isTrue);
-      room.bridge.release();
+      room.phone.release();
       await flush(tester);
       room.expectVisitAndVitals();
       expect(room.speech(tester), isNull);
@@ -404,7 +587,7 @@ void main() {
 
   testWidgets('becoming idle before the arrival read finishes does not revive its greeting', (tester) async {
     final room = _Room(temporary);
-    await room.open(tester);
+    await room.open(tester, dropHostOnSend: true);
     try {
       await room.send('说一句。');
       expect(room.running, isTrue);
@@ -415,7 +598,7 @@ void main() {
       expect(find.text(room.l10n(tester).companionSendFailed), findsNothing);
       expect(find.text(room.l10n(tester).companionAgentRetryClosed), findsNothing);
       expect(room.speech(tester), isNull);
-      room.bridge.release();
+      room.phone.release();
       await flush(tester);
       room.expectVisitAndVitals();
       expect(room.speech(tester), isNull);
@@ -427,7 +610,7 @@ void main() {
 
   testWidgets('a marker-only reply coalesced through completion supersedes a pending greeting', (tester) async {
     final room = _Room(temporary);
-    await room.open(tester);
+    await room.open(tester, dropHostOnSend: true);
     try {
       await room.send('说一句。');
       room.words('[表情:担心]');
@@ -437,7 +620,7 @@ void main() {
         '[表情:担心]',
       ]);
       expect(room.speech(tester), isNull);
-      room.bridge.release();
+      room.phone.release();
       await flush(tester);
       room.expectVisitAndVitals();
       expect(room.speech(tester), isNull);
@@ -475,7 +658,7 @@ void main() {
       // The process-level agent repeats its unchanged idle state to the window.
       room.container.read(companionAgentProvider).changed();
       await flush(tester);
-      room.bridge.release();
+      room.phone.release();
       await flush(tester);
       room.expectVisitAndVitals();
       // This pack has no name: she introduces herself without one.

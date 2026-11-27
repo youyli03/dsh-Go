@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import io.github.ccch1mneyyy.dsh_app.R
 import io.github.ccch1mneyyy.dsh_app.i18n.AppStrings
 import io.github.ccch1mneyyy.dsh_app.phone.SystemActions
@@ -18,7 +19,13 @@ internal class CompanionReminderAndroid(private val context: Context) : Companio
     override fun capabilities(): Map<String, Any> = CompanionReminderPlatform.capabilities(context)
 
     override fun register(key: ReminderKey, epochMs: Long) {
-        alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, epochMs, alarmIntent(key))
+        // Without exact-alarm access it still rings, just possibly a little late
+        // (Android 12+ keeps an inexact alarm within an hour); never not at all.
+        if (Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()) {
+            alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, epochMs, alarmIntent(key))
+        } else {
+            alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, epochMs, alarmIntent(key))
+        }
     }
 
     override fun cancel(key: ReminderKey) {
@@ -34,6 +41,13 @@ internal class CompanionReminderAndroid(private val context: Context) : Companio
     )
 
     override fun notify(reminder: StoredReminder) {
+        val resident = CompanionAlwaysOnState.read(context)
+        // A false result is a refusal before notify, so the original reminder
+        // path remains available when only the companion channel is blocked.
+        // An exception after dispatch stays unknown; it must not send again.
+        if (resident.enabled && CompanionConversationNotification.update(context, resident.epoch,
+                reminder.key.notificationTag, reminder.text.orEmpty(), "", false, false,
+                reminder.key.uri("open").toString())) return
         val open = PendingIntent.getActivity(context, 0,
             Intent(context, EntryActivity::class.java).setAction(EntryActivity.ACTION_COMPANION_TASK)
                 .setData(reminder.key.uri("open")),
@@ -54,5 +68,5 @@ internal class CompanionReminderAndroid(private val context: Context) : Companio
 
     override fun isActive(key: ReminderKey): Boolean = notifications.activeNotifications.any {
         it.tag == key.notificationTag && it.id == 0
-    }
+    } || CompanionConversationNotification.contains(context, key.notificationTag)
 }

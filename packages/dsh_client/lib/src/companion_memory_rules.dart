@@ -327,6 +327,11 @@ void _timeProposal(Object? value, String firstQuote, {required bool followup}) {
   }
 }
 
+/// Structured tools use the same three-key date and original-wording boundary.
+/// This validates a model proposal; it does not interpret a relative date.
+void validateMemoryEventTime(Object? value, {required String sourceText}) =>
+    _timeProposal(value, sourceText, followup: false);
+
 MemoryRow _object(Object? value) {
   if (value is! MemoryRow) throw const FormatException('Expected an object');
   return value;
@@ -443,9 +448,63 @@ String _memoryBlock(List<MemoryRow> cards) => jsonEncode({
   'version': 2,
   'scope': 'real',
   'items': [
-    for (final card in cards) {'id': card['id'], 'kind': card['kind'], 'text': card['text']},
+    for (final card in cards)
+      {
+        'id': card['id'],
+        'kind': card['kind'],
+        'text': card['text'],
+        if (card['source'] != null) 'source': card['source'],
+      },
   ],
 });
+
+/// Shared eligibility for lexical and vector ranking. Retrieval algorithms do
+/// not relax the stored source, status, expiry or explicit-topic conditions.
+bool isMemoryContextEligible(MemoryRow card, {required int nowMs, Set<String> explicitTopicIds = const {}}) {
+  if (card['scope'] != 'real' ||
+      card['eligible'] != true ||
+      card['status'] == 'withdrawn' ||
+      const ['cancelled', 'postponed'].contains(card['plan_state'])) {
+    return false;
+  }
+  // Older stored automatic rows can predate the proposal text boundary.
+  // Keep the exact same control-character contract as the v2 bridge.
+  if (_memoryControls.hasMatch(card['text']! as String)) return false;
+  final expiry = card['expires_at_ms'] as int?;
+  if (expiry != null && expiry <= nowMs) return false;
+  if (card['status'] == 'past' &&
+      ((card['evidence']! as List<Object?>).isEmpty ||
+          !_pastWording.hasMatch(normalizeMemoryText(card['text']! as String)))) {
+    return false;
+  }
+  return card['topic_mode'] != 'never' || explicitTopicIds.contains(card['topic_id']);
+}
+
+MemorySelection selectRankedMemoryContext(
+  List<MemoryRow> cards, {
+  required List<String> rankedIds,
+  required int nowMs,
+  required int controlRevision,
+  Set<String> explicitTopicIds = const {},
+  int limit = memoryContextLimit,
+}) {
+  if (limit < 1 || limit > memoryContextHardLimit) throw ArgumentError.value(limit, 'limit');
+  final available = {
+    for (final card in cards)
+      if (isMemoryContextEligible(card, nowMs: nowMs, explicitTopicIds: explicitTopicIds)) card['id'] as String: card,
+  };
+  final selected = <MemoryRow>[];
+  final ids = <String>{};
+  for (final id in rankedIds) {
+    if (selected.length == limit) break;
+    final card = available[id];
+    if (card == null || ids.contains(id)) continue;
+    if (_memoryBlock([...selected, card]).runes.length > memoryContextScalarLimit) continue;
+    selected.add(card);
+    ids.add(id);
+  }
+  return MemorySelection(block: _memoryBlock(selected), ids: ids.toList(), controlRevision: controlRevision);
+}
 
 MemorySelection selectMemoryContext(
   List<MemoryRow> cards, {
@@ -457,25 +516,9 @@ MemorySelection selectMemoryContext(
 }) {
   if (limit < 1 || limit > memoryContextHardLimit) throw ArgumentError.value(limit, 'limit');
   final query = normalizeMemoryText(input);
-  final eligible = cards.where((card) {
-    if (card['scope'] != 'real' ||
-        card['eligible'] != true ||
-        card['status'] == 'withdrawn' ||
-        const ['cancelled', 'postponed'].contains(card['plan_state'])) {
-      return false;
-    }
-    // Older stored automatic rows can predate the proposal text boundary.
-    // Keep the exact same control-character contract as the v2 bridge.
-    if (_memoryControls.hasMatch(card['text']! as String)) return false;
-    final expiry = card['expires_at_ms'] as int?;
-    if (expiry != null && expiry <= nowMs) return false;
-    if (card['status'] == 'past' &&
-        ((card['evidence']! as List<Object?>).isEmpty ||
-            !_pastWording.hasMatch(normalizeMemoryText(card['text']! as String)))) {
-      return false;
-    }
-    return card['topic_mode'] != 'never' || explicitTopicIds.contains(card['topic_id']);
-  }).toList();
+  final eligible = cards
+      .where((card) => isMemoryContextEligible(card, nowMs: nowMs, explicitTopicIds: explicitTopicIds))
+      .toList();
   final hits = {for (final card in eligible) card['id']! as String: _hits(card, query)};
   eligible.sort((a, b) {
     final byHits = hits[b['id']]!.compareTo(hits[a['id']]!);
@@ -579,7 +622,7 @@ MemoryRow _correction(String replacement, String? target, List<MemoryRow> cards)
 
 /// Recognizes a few direct invitations, not arbitrary keyword questions.
 /// The returned permission lasts for one selection; it never changes a topic.
-Set<String> explicitMemoryTopics(String input, List<MemoryRow> cards) {
+Set<String> explicitMemoryTopics(String input, Iterable<MemoryRow> cards) {
   final text = normalizeMemoryText(_controlInput(input));
   if (_nonLiteralControl(text)) return {};
   final match =

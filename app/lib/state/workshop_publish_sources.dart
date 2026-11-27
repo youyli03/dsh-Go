@@ -13,6 +13,7 @@ import '../themes/theme_pack.dart';
 import '../workshop/workshop_models.dart';
 import '../workshop/workshop_preview.dart';
 import '../workshop/workshop_repository.dart';
+import 'workshop_auth_state.dart';
 import 'workshop_dependencies.dart';
 import 'workshop_preferences.dart';
 import 'workshop_publication.dart';
@@ -136,7 +137,7 @@ class WorkshopPublishSourcesController extends Notifier<WorkshopPublishSources> 
   }
 }
 
-final workshopPublishSourcesProvider = NotifierProvider<WorkshopPublishSourcesController, WorkshopPublishSources>(
+final workshopPublishSourcesProvider = NotifierProvider.autoDispose<WorkshopPublishSourcesController, WorkshopPublishSources>(
   WorkshopPublishSourcesController.new,
 );
 
@@ -168,11 +169,8 @@ class WorkshopPreparedDraft {
   }
 }
 
-/// Unpacks a zip the person picked into a folder of its own, through the same
-/// import as 导入 (a pet: pack.json or a Codex pet; a companion: a Live2D
-/// model, with or without character.json), so a file that would not install
-/// fails here, before the form. Nothing joins their pets, and the companion
-/// they have stays: a character-only model borrows a copy of its runtime.
+/// Unpacks a picked ZIP through the normal pet, companion or theme importer
+/// in an isolated directory, without changing any installed content.
 typedef WorkshopFileStager = Future<WorkshopPublishSource> Function(File zip);
 
 final workshopFileStagerProvider = Provider<WorkshopFileStager>((ref) {
@@ -264,6 +262,8 @@ final workshopPrepareDraftProvider = Provider<WorkshopPrepareDraft>((ref) {
           source.previewSource != null && source.previewSource != workshopPreviewSources[source.kind]) {
         workshopInvalid('workshop_bad_metadata');
       }
+      final petIdleDownscale = source.previewSource == 'pet-idle' &&
+          ref.read(workshopAccessProvider).capabilities?.preview?.petIdleDownscale == true;
       final repo = await repository;
       final root = Directory('${(await directory()).path}/exports');
       await root.create(recursive: true);
@@ -272,7 +272,8 @@ final workshopPrepareDraftProvider = Provider<WorkshopPrepareDraft>((ref) {
       final file = File('${draft.path}/archive.zip');
       final WorkshopPreparedUpload upload;
       if (source.kind == 'pet') {
-        upload = await repo.preparePet(source.library ?? pets, source.localId, file, publication);
+        upload = await repo.preparePet(source.library ?? pets, source.localId, file, publication,
+          petIdleDownscale: petIdleDownscale);
       } else if (source.kind == 'theme') {
         upload = await repo.prepareTheme(
           source.themeLibrary ?? themes,

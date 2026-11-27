@@ -166,9 +166,9 @@ DS Bot 的 NOTICE 原文附在文末。
 | 项目 | Libraries.dev，https://github.com/Jakubantalik/Libraries.dev （基于提交 `387b049`） |
 | 版权人 | Copyright (c) 2026 Jakub Antalik |
 | 许可 | MIT（只用代码；`LICENSE-MODEL.md` 管的模型文件 `Magnet.mfxl`、`VoicePosition.mfxl` 和 Pro 内容都没有用） |
-| 用途 | 界面特效：思考光球、边框流光、语音辉光、语音光环、机器人头像等，从作者的 TypeScript / Swift / Metal 源码翻译成 Dart、Flutter 着色器和 Kotlin；手机操控时屏幕边缘的色带取自 Distortion waves（`packages/distortion-waves`）着色器里留在屏幕边缘的那部分颜色（rim）和 `WaveRim.lumps` |
+| 用途 | 界面特效：思考光球、边框流光、语音辉光、语音光环、机器人头像等，从作者的 TypeScript / Swift / Metal 源码翻译成 Dart、Flutter 着色器和 Kotlin；手机操控时屏幕边缘的色带取自 Distortion waves（`packages/distortion-waves`）着色器里留在屏幕边缘的那部分颜色（rim）和 `WaveRim.lumps`，叠加的贴边亮线、外晕和绕圈光束取自 Border beam（`packages/border-beam`）的 stroke、bloom 和 rotate |
 
-本仓库位置：`app/lib/ui/fx/`（每个文件第一行注明出处）及其 `app/shaders/fx/` 下的着色器；手机操控的边缘色带在 `app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/EdgeBeam.kt`、`EdgeBeamModel.kt`（同样在文件第一行注明出处）。
+本仓库位置：`app/lib/ui/fx/`（每个文件第一行注明出处）及其 `app/shaders/fx/` 下的着色器；手机操控的边缘色带在 `app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/EdgeBeam.kt`、`EdgeBeamModel.kt`，悬浮条（灵动岛）边上的光束在同目录的 `OverlayLook.kt`（同样在文件第一行注明出处）。
 
 金属质感的着色器 `app/shaders/fx/metal_liquid.frag` 是 metal-fx 用的 Paper Shaders `liquidMetal`（Apache-2.0，Paper Design, Inc.，`@paper-design/shaders` 0.0.80）的 GLSL 翻译，按 metal-fx 的 NOTICE 原文保留：
 
@@ -344,7 +344,7 @@ Libraries.dev metal-fx, translated to Flutter GLSL.
 
 ### tawcroot（tawc，MIT）
 
-「tawcroot 加速启动」（设置 → 开发者选项，默认关闭）用的 `libtawcroot.so`，由 `runtime/tawcroot/build.py` 从 [tawc](https://github.com/wmww/tawc) 固定提交 `a49a4075228f4801dadc1eee584aed33fe8ea4ce`（源码归档 SHA-256 `74487243bde86c303e786e79cd4a13e98c3279cae4ab7725dcf5fa51c0b530c1`）的 `tawcroot/src`、`tawcroot/include` 编译；编译前打上本地覆片 `runtime/tawcroot/bind-aware-oracle.diff`（`prod_readlink` 遇到已生效的绑定边界即停，修手机存储快捷链接子路径误报 EACCES），其余是上游原样。tawc 的 README 写明 `deps/` 以外的代码都是 MIT（[LICENSE.MIT](https://github.com/wmww/tawc/blob/a49a4075228f4801dadc1eee584aed33fe8ea4ce/LICENSE.MIT)）；整个项目因 `deps/` 里的 GPLv3 代码按 GPLv3 发布，那部分我们不编译、不分发。
+「tawcroot 加速启动」用的 `libtawcroot.so`，由 `runtime/tawcroot/build.py` 从 [tawc](https://github.com/wmww/tawc) 固定提交 `a49a4075228f4801dadc1eee584aed33fe8ea4ce`（源码归档 SHA-256 `74487243bde86c303e786e79cd4a13e98c3279cae4ab7725dcf5fa51c0b530c1`）的 `tawcroot/src`、`tawcroot/include` 编译；编译前打上本地覆片 `runtime/tawcroot/bind-aware-oracle.diff`（修复经手机存储快捷链接访问子路径误报 EACCES）及 `runtime/tawcroot/shm-bind-precedence.diff`（显式 `/dev/shm` 绑定优先，保留跨进程共享语义），其余是上游原样。tawc 的 README 写明 `deps/` 以外的代码都是 MIT（[LICENSE.MIT](https://github.com/wmww/tawc/blob/a49a4075228f4801dadc1eee584aed33fe8ea4ce/LICENSE.MIT)）；整个项目因 `deps/` 里的 GPLv3 代码按 GPLv3 发布，那部分我们不编译、不分发。
 
 - 版权：Copyright (c) 2026 Sophie Winter
 - 许可：MIT（全文见文末「MIT License」），App 内「开源许可」页的 `tawcroot (tawc)` 条目附全文

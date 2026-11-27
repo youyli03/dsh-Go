@@ -59,6 +59,7 @@ import 'prompt/preset.dart';
 import 'prompt/prompt_assembler.dart';
 import 'prompt/post_processing.dart';
 import 'prompt/prompt_types.dart';
+import 'prompt/prompt_manager_snapshot.dart';
 import 'regex/regex_engine.dart';
 import 'regex/regex_worker.dart';
 import 'regex_library.dart';
@@ -81,6 +82,7 @@ import 'worldinfo/world_info.dart';
 
 part 'engine_state.dart';
 part 'engine_spreset.dart';
+part 'engine_spreset_response_metadata.dart';
 part 'engine_profile.dart';
 part 'engine_prompt_history.dart';
 part 'engine_authoring.dart';
@@ -126,6 +128,11 @@ part 'engine_script_variables.dart';
 part 'engine_scripts_messages.dart';
 part 'engine_script_generation_types.dart';
 part 'engine_script_generation.dart';
+part 'engine_helper_generation.dart';
+part 'engine_helper_request.dart';
+part 'engine_helper_response.dart';
+part 'engine_helper_output.dart';
+part 'engine_helper_spreset.dart';
 part 'engine_script_generation_commit.dart';
 part 'engine_script_prompt.dart';
 part 'engine_script_injections.dart';
@@ -233,7 +240,7 @@ class TavernInspection {
 
 /// Owns the character files, chat database, settings, and active generations.
 /// Only one engine should open a given app-support directory at a time.
-class TavernEngine implements Tavern, TavernSPresetLogApi {
+class TavernEngine implements Tavern, TavernSPresetLogApi, TavernSPresetPageLifecycle {
   TavernEngine._(
     this.directory,
     this._store,
@@ -453,6 +460,26 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
   late final _GroupCoordinator _groups = _GroupCoordinator(this);
   late final _ScriptCoordinator _scripts = _ScriptCoordinator(this);
   final _spresetGenerations = <_SPresetGeneration>{};
+  final _spresetEntryGenerations = <String, _SPresetGeneration>{};
+  final _spresetPromptManagers = <String, PromptManagerSnapshot>{};
+  final _spresetPageEpochs = <String, int>{};
+
+  @override
+  void resetSPresetPage(String chatId) {
+    _ensureOpen();
+    if (chatId.isEmpty) throw ArgumentError.value(chatId, 'chatId', 'A page reset requires its chat identity.');
+    _spresetPageEpochs[chatId] = (_spresetPageEpochs[chatId] ?? 0) + 1;
+    _spresetPromptManagers.remove(chatId);
+    _clearSPresetEntryDecisions(chatId);
+  }
+
+  // The App routes SPreset evaluation to a chat's canvas. END/STOP clears
+  // that canvas's current decisions, not another chat or pending evaluations.
+  // Helper's private js_generation_ended event does not use this method.
+  void _clearSPresetEntryDecisions(String chatId) => _spresetEntryGenerations.remove(chatId);
+
+  void _clearAllSPresetEntryDecisions() => _spresetEntryGenerations.clear();
+
   final _spresetMacroNest = SPresetMacroNestRuntime();
   final _spresetLogs = SPresetLogBuffer();
   Future<void>? _spresetLogLoad;
@@ -779,6 +806,28 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
     if (_characterDetails.length > _detailCacheCapacity) _characterDetails.remove(_characterDetails.keys.first);
   }
 
+  void _cacheCharacterRecord(String id, StoredCharacter stored) =>
+      _cacheCharacterDetail(id, Future.value(_detailCopy(stored)));
+
+  /// [record] as the detail cache keeps it: nothing reads the original
+  /// container from there (exports and edits read their own), so no copy of it.
+  static StoredCharacter _detailCopy(StoredCharacter record) {
+    final card = record.card;
+    return StoredCharacter(
+      id: record.id,
+      card: TavernCard(
+        json: card.json,
+        assets: card.assets,
+        png: card.png,
+        avatar: card.avatar,
+        sourceFormat: card.sourceFormat,
+      ),
+      importedAt: record.importedAt,
+      avatarPath: record.avatarPath,
+      directoryPath: record.directoryPath,
+    );
+  }
+
   Future<StoredCharacter?> _record(String id) {
     if (!CharacterLibrary.isValidId(id)) return Future.value(null);
     final cached = _characterDetails.remove(id);
@@ -789,8 +838,11 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
     late final Future<StoredCharacter?> result;
     result = Future<StoredCharacter?>.sync(() => _library.read(id)).then(
       (record) {
-        if (record == null && identical(_characterDetails[id], result)) _characterDetails.remove(id);
-        return record;
+        if (record == null) {
+          if (identical(_characterDetails[id], result)) _characterDetails.remove(id);
+          return null;
+        }
+        return _detailCopy(record);
       },
       onError: (Object error, StackTrace stack) {
         if (identical(_characterDetails[id], result)) _characterDetails.remove(id);
@@ -897,7 +949,7 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
     return _libraryOperation(() async {
       final stored = await _library.updateFields(characterId, patch);
       _characterCache = null;
-      _cacheCharacterDetail(characterId, Future.value(stored));
+      _cacheCharacterRecord(characterId, stored);
       _notifyLists();
       final stats = _store.characterChatStats()[characterId];
       return stored.toCharacter(chatCount: stats?.count ?? 0, lastChatAt: stats?.lastAt);
@@ -936,7 +988,7 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
     return _libraryOperation(() async {
       final stored = await save();
       _characterCache = null;
-      _cacheCharacterDetail(characterId, Future.value(stored));
+      _cacheCharacterRecord(characterId, stored);
       _notifyLists();
       final stats = _store.characterChatStats()[characterId];
       return stored.toCharacter(chatCount: stats?.count ?? 0, lastChatAt: stats?.lastAt);
@@ -1151,7 +1203,7 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
       },
     );
     _characterCache = null;
-    _cacheCharacterDetail(stored.id, Future.value(stored));
+    _cacheCharacterRecord(stored.id, stored);
     _notifyLists();
     return stored.toCharacter(regexDiagnostics: diagnostics);
   });
@@ -4450,22 +4502,7 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
       _prepareStateTurn(turn, hostData);
       turn.gameplayInitialized =
           turn.gameplay != null && !hadGameplayValue && _map(turn.state['messageVariables']).containsKey('dshgo');
-      final presetRaw = _readMap(turn.settings['preset']);
-      final spreset = turn.spreset = _SPresetGeneration(
-        this,
-        chatId: chatId,
-        generationId: turn.generationId,
-        cancellation: turn.cancellation,
-        settings: turn.settings,
-        model: turn.config,
-        generationType: turn.generationType,
-        presetId: turn.presetId,
-        onIssue: turn.hookIssues.add,
-        preset: {
-          ...(presetRaw.isEmpty ? ChatPreset.stDefault().raw : presetRaw),
-          if (!presetRaw.containsKey('show_thoughts')) 'show_thoughts': !turn.config.deepseek || turn.config.thinking,
-        },
-      );
+      final spreset = turn.spreset ??= _createNativeSPreset(turn);
       final preset = ChatPreset(
         await spreset.preparePreset(
           turn.generationType,
@@ -4755,8 +4792,10 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
         prefix: historyWindow?.prefix ?? const [],
         cacheWindow: cacheWindow,
         onInput: (input) => turn.spresetPromptInput = input,
+        onPromptManager: spreset.capturePromptManager,
       );
       assembly = await spreset.assembly(assembly, turn.spresetPromptInput!, counter);
+      assembly = await spreset.selectNativeWireTools(assembly, turn.spresetPromptInput!);
       if (assembly.historyWindow case final window?) {
         turn.pendingPromptWindow = _PendingPromptWindow(window, parent, windowConfiguration);
       } else {
@@ -5110,6 +5149,7 @@ class TavernEngine implements Tavern, TavernSPresetLogApi {
         : ModelRequestContext(
             preparedBody: turn.spreset != null,
             onResponseStarted: turn.spreset?.observeResponseStarted,
+            onResponseFrame: turn.spreset?.nativeResponseFrameObserver,
             onResponseBytes: turn.spreset?.observeResponseBytes,
             onResponseSecret: turn.spreset?.observeResponseSecret,
             cancellation: requestCancellation,

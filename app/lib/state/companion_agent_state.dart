@@ -1,5 +1,5 @@
-// Every companion window shares the phone model loop. Host availability only
-// determines which real computer tools a new turn can offer.
+// Every companion window shares the phone model/tool loop. Full mode resolves
+// each model round through its Host; Light retains the direct phone route.
 
 import 'package:dsh_client/dsh_client.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,7 +19,12 @@ final companionAgentProvider = Provider<CompanionAgent>((ref) {
     ref: ref,
     memoryTransport: () => ref.read(companionAgentMemoryTransportProvider),
     host: () => ref.read(companionAgentHostProvider),
-    client: () => ref.read(companionLightClientProvider)(),
+    client: () {
+      if (!ref.mounted) {
+        throw const DshClosedException('Companion agent closed');
+      }
+      return ref.read(companionLightClientProvider)();
+    },
     apiKey: () => ref.read(settingsProvider).apiKey,
     onUsage: (usage) {
       if (!ref.mounted) return;
@@ -38,8 +43,8 @@ final companionAgentProvider = Provider<CompanionAgent>((ref) {
   return agent;
 });
 
-/// Until the background manager uses the tool loop too, both modes keep the
-/// existing worker on the same phone transport, without a stale host Session.
+/// Light mode keeps its existing phone transport, including the unset offline default.
+/// Full-mode chat and maintenance resolve their captured Host asynchronously.
 final companionAgentMemoryTransportProvider = Provider<CompanionMemoryTransport>((ref) {
   return CompanionLightMemoryTransport(
     apiKey: () => ref.read(settingsProvider).apiKey,
@@ -47,15 +52,16 @@ final companionAgentMemoryTransportProvider = Provider<CompanionMemoryTransport>
   );
 });
 
-typedef CompanionAgentHost = ({HostRef host, DshClient client});
+typedef CompanionAgentHost = ({HostRef host, DshClient? client});
 
 /// The existing unset preference means full with a connection, light without
-/// one. Even an explicitly full room can still chat while its host is offline;
-/// only the computer tools need this captured host and client.
+/// one. A disconnected selected Host only identifies saved originals for the
+/// three offline queue tools; it is not a live capability or a Host session.
+/// Explicit light mode continues to offer only phone tools.
 final companionAgentHostProvider = Provider<CompanionAgentHost?>((ref) {
   final mode = ref.watch(companionModeProvider);
   final connection = ref.watch(activeConnectionProvider).value;
   final host = ref.watch(activeHostProvider);
-  if (mode == CompanionMode.light || connection == null) return null;
-  return (host: host, client: connection.client);
+  if (mode == CompanionMode.light) return null;
+  return (host: host, client: connection?.client);
 });
