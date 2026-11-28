@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class RemoteExecClient(context: Context, private val cancellationExecutor: Executor = cancelWorker) {
     private val runtime = RuntimeController.get(context)
     private val policy = RemoteControlState.policy(context)
+    private val appSettings = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
     private var cookie: String? = null
     private var cookieProof: String? = null
 
@@ -66,6 +67,9 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
                 val sessionId = resumeSession ?: "dsh-go-exec-${UUID.randomUUID()}"
                 if (resumeSession == null && !createSession(origin, sessionId, workspaceId)) return fail("session_create_failed")
                 if (stopped.get() || !policy.allowed(call)) return fail("cancelled")
+                if (resumeSession == null && appSettings.getBoolean("flutter.auto_approve_commands", false) &&
+                    !applyAutoApprovePreset(origin, sessionId)) return fail("session_permission_unavailable")
+                if (stopped.get() || !policy.allowed(call)) return fail("cancelled")
                 request["sessionId"] = sessionId
                 if (resumeRequest != null) request["resumeRequestId"] = resumeRequest
             } else {
@@ -102,14 +106,25 @@ internal class RemoteExecClient(context: Context, private val cancellationExecut
     }
 
     private fun createSession(origin: RuntimeController.RemoteExecOrigin, sessionId: String, workspaceId: String): Boolean {
-        val method = "session/create"
+        return engineCommand(origin, "session/create",
+            mapOf("request" to mapOf("sessionId" to sessionId, "workspaceId" to workspaceId)))?.get("sessionId") == sessionId
+    }
+
+    private fun applyAutoApprovePreset(origin: RuntimeController.RemoteExecOrigin, sessionId: String): Boolean {
+        val response = engineCommand(origin, "commands/execute", mapOf(
+            "agentId" to sessionId, "line" to "/permission danger-full-access",
+            "submittedAttachments" to emptyList<Any>(),
+        ))
+        return (response?.get("result") as? Map<*, *>)?.get("kind") == "success"
+    }
+
+    private fun engineCommand(origin: RuntimeController.RemoteExecOrigin, method: String, args: Map<String, Any?>): Map<*, *>? {
         val rpcId = UUID.randomUUID().toString()
         val envelope = mapOf("type" to "client-request", "method" to method, "rpcId" to rpcId,
-            "payload" to mapOf("args" to mapOf("request" to mapOf("sessionId" to sessionId, "workspaceId" to workspaceId))))
+            "payload" to mapOf("args" to args))
         val response = post(origin, "/api/$method", envelope, engineRpc = true)
-        val result = response["result"] as? Map<*, *> ?: return false
-        return response["rpcId"] == rpcId && result["ok"] == true &&
-            (result["value"] as? Map<*, *>)?.get("sessionId") == sessionId
+        val result = response["result"] as? Map<*, *> ?: return null
+        return if (response["rpcId"] == rpcId && result["ok"] == true) result["value"] as? Map<*, *> else null
     }
 
     private fun post(origin: RuntimeController.RemoteExecOrigin, suffix: String, args: Map<String, Any?>,

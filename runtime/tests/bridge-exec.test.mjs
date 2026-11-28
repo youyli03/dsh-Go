@@ -127,21 +127,19 @@ test('workspace preparation reuses the dedicated directory and groups text-only 
   assert.equal((await f.call('', { requestId: randomUUID(), workspaceId: 'other', prompt: 'text' })).status, 400);
 });
 
-function normalAgent({ approval = 'ask', hold = false, extraUser = false, reason = 'completed' } = {}) {
+function normalAgent({ preset = 'read-only', hold = false, extraUser = false, reason = 'completed' } = {}) {
   const events = [];
   const session = {
     id: `dsh-go-exec-${randomUUID()}`,
+    permissionPreset: preset,
     get seq() { return events.length; },
     eventAt: seq => events[seq],
   };
-  let sandboxMode = 'danger-full-access', approvalPolicy = 'never', submissions = 0, cancellations = 0;
+  let submissions = 0, cancellations = 0;
   const services = {
     permissionPresets: {
-      resolve: () => ({ sandbox: 'workspace-write', approval }),
-      set() { sandboxMode = 'workspace-write'; approvalPolicy = approval; },
+      set(_session, value) { session.permissionPreset = value; },
     },
-    sandboxPolicy: { resolve: () => ({ mode: sandboxMode }) },
-    approval: { effectivePolicy: () => approvalPolicy },
   };
   return {
     session,
@@ -153,8 +151,6 @@ function normalAgent({ approval = 'ask', hold = false, extraUser = false, reason
     get cancellations() { return cancellations; },
     append: (type, data) => events.push({ type, data: { turn: 1, ...data } }),
     followup(message) {
-      assert.equal(sandboxMode, 'workspace-write');
-      assert.equal(approvalPolicy, 'ask');
       assert.equal(message.role, 'user');
       assert.match(message.id, /^[a-f0-9-]{36}$/);
       submissions++;
@@ -170,15 +166,18 @@ function normalAgent({ approval = 'ask', hold = false, extraUser = false, reason
   };
 }
 
-test('session exec submits only after verifying and saving its restricted permissions', async t => {
-  const agent = normalAgent();
-  const f = fixture(t, { agent });
-  const requestId = randomUUID();
-  assert.equal((await f.call('', { requestId, sessionId: agent.session.id, prompt: 'Use tools if needed' })).status, 202);
-  assert.deepEqual(await f.waitTerminal(requestId),
-    { requestId, sessionId: agent.session.id, status: 'succeeded', text: 'session reply' });
-  assert.equal(agent.submissions, 1);
-  assert.equal(f.inputs.length, 0);
+test('session exec preserves the permission chosen by normal session creation', async t => {
+  for (const preset of ['read-only', 'workspace-write', 'danger-full-access']) {
+    const agent = normalAgent({ preset });
+    const f = fixture(t, { agent });
+    const requestId = randomUUID();
+    assert.equal((await f.call('', { requestId, sessionId: agent.session.id, prompt: 'Use tools if needed' })).status, 202);
+    assert.deepEqual(await f.waitTerminal(requestId),
+      { requestId, sessionId: agent.session.id, status: 'succeeded', text: 'session reply' });
+    assert.equal(agent.submissions, 1);
+    assert.equal(agent.session.permissionPreset, preset);
+    assert.equal(f.inputs.length, 0);
+  }
 });
 
 test('session continuation requires a matching prior request and an idle agent', async t => {
@@ -195,10 +194,12 @@ test('session continuation requires a matching prior request and an idle agent',
   assert.equal((await f.call('', { ...resume, requestId: busyId })).status, 202);
   assert.equal((await f.waitTerminal(busyId)).errorCode, 'session_busy');
   agent.inbox.nextTurn.pop();
+  agent.session.permissionPreset = 'workspace-write';
   const resumedId = randomUUID();
   assert.equal((await f.call('', { ...resume, requestId: resumedId, timeoutSeconds: 1800 })).status, 202);
   assert.equal((await f.waitTerminal(resumedId)).status, 'succeeded');
   assert.equal(agent.submissions, 2);
+  assert.equal(agent.session.permissionPreset, 'workspace-write');
 });
 
 test('session exec reports only the category of the current tool until its result arrives', async t => {
@@ -238,14 +239,13 @@ test('session exec withholds mixed-user replies and reports genuine turn failure
   }
 });
 
-test('exec never submits if the negotiated preset auto-approves or permissions could not be saved', async t => {
-  for (const [agent, flush] of [[normalAgent({ approval: 'never' }), true], [normalAgent(), false]]) {
-    const f = fixture(t, { agent, flush });
-    const requestId = randomUUID();
-    await f.call('', { requestId, sessionId: agent.session.id, prompt: 'Do not dispatch' });
-    assert.equal((await f.waitTerminal(requestId)).status, 'failed');
-    assert.equal(agent.submissions, 0);
-  }
+test('exec never submits if the new session cannot be saved', async t => {
+  const agent = normalAgent();
+  const f = fixture(t, { agent, flush: false });
+  const requestId = randomUUID();
+  await f.call('', { requestId, sessionId: agent.session.id, prompt: 'Do not dispatch' });
+  assert.equal((await f.waitTerminal(requestId)).status, 'failed');
+  assert.equal(agent.submissions, 0);
 });
 
 test('revoking exec cancels an admitted session turn and removes its queued input', async t => {

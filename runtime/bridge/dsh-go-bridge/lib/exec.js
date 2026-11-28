@@ -58,10 +58,6 @@ async function runApprovedSession(ctx, record, prompt) {
     const sessions = ctx.get('sessions');
     agent = ctx.get('agents')?.get(sessionId);
     const session = agent?.session;
-    const scope = agent?.loopCtx ?? agent?.ctx;
-    const permissions = scope?.get('permissionPresets') ?? ctx.get('permissionPresets');
-    const sandbox = scope?.get('sandboxPolicy');
-    const approval = scope?.get('approval');
     const blank = () => {
       for (let seq = 0; seq < session.seq; seq++) {
         const type = session.eventAt(seq)?.type;
@@ -76,26 +72,17 @@ async function runApprovedSession(ctx, record, prompt) {
         typeof sessions?.flush !== 'function' || typeof session?.eventAt !== 'function' ||
         !Number.isSafeInteger(session.seq) || session.seq < 0)
       return { status: 'failed', errorCode: 'session-unavailable' };
-    if (typeof permissions?.set !== 'function' || typeof permissions.resolve !== 'function' ||
-        typeof sandbox?.resolve !== 'function' || typeof approval?.effectivePolicy !== 'function')
-      return { status: 'failed', errorCode: 'session-permission-unavailable' };
     signal.throwIfAborted();
     if (!current() || (!record.resume && !blank()))
       return { status: 'failed', errorCode: 'session-unavailable' };
     if (record.resume && !idle()) return { status: 'failed', errorCode: 'session_busy' };
-    const spec = permissions.resolve('workspace-write');
-    if (spec.sandbox !== 'workspace-write' || spec.approval !== 'ask')
-      return { status: 'failed', errorCode: 'session-permission-unavailable' };
-    if (!record.resume) {
-      permissions.set(session, 'workspace-write');
-      if (await sessions.flush(session) !== true)
-        return { status: 'failed', errorCode: 'session-persistence-failed' };
-    }
+    // The regular create-session RPC owns permission defaults. Followups keep
+    // the session's existing policy and let the engine enforce it on each tool.
+    if (!record.resume && await sessions.flush(session) !== true)
+      return { status: 'failed', errorCode: 'session-persistence-failed' };
     signal.throwIfAborted();
-    if (!current() ||
-        sandbox.resolve({ session }).mode !== 'workspace-write' || approval.effectivePolicy(session) !== 'ask' ||
-        (!record.resume && !blank()))
-      return { status: 'failed', errorCode: 'session-permission-unavailable' };
+    if (!current() || (!record.resume && !blank()))
+      return { status: 'failed', errorCode: 'session-unavailable' };
     let cursor = session.seq, turn, ours = false, other = false, text = '';
     const activeTools = new Map();
     signal.addEventListener('abort', cancel, { once: true });
