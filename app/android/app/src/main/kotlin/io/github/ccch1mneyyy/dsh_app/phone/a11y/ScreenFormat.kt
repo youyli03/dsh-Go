@@ -222,21 +222,30 @@ object ScreenFormat {
     /** Masked content/state for observation comparison, including elements outside the text budget. */
     internal data class ObservationElement(val key: String, val windowId: Int, val bounds: Box, val interactive: Boolean)
 
-    internal fun observationKeys(windows: List<UiWindow>): List<String> =
-        observationElements(windows).map { it.key }
+    internal fun coordinateTargets(windows: List<UiWindow>): List<ObservationElement> = buildList {
+        fun walk(node: UiNode, windowId: Int, parent: String) {
+            // Use the node's own label. The formatted parent label can absorb text
+            // from a child far from the gesture point.
+            val identity = listOf(parent, node.className, node.viewId, node.bounds).joinToString("|")
+            val text = if (node.editable || node.password) emptyList() else
+                listOf(node.text, node.desc, node.hint, node.stateDesc).map { clean(it) }
+            val key = listOf(identity, text, node.enabled, node.focused, node.selected, node.checked,
+                node.editable, node.clickable, node.longClickable, node.scrollable).joinToString("|")
+            add(ObservationElement(key, windowId, node.bounds,
+                node.enabled && (node.clickable || node.longClickable || node.editable)))
+            node.children.forEach { walk(it, windowId, identity) }
+        }
+        for (window in windows) window.root?.let { walk(it, window.id, "") }
+    }
 
-    internal fun observationElements(windows: List<UiWindow>): List<ObservationElement> {
-        val out = mutableListOf<ObservationElement>()
+    internal fun observationKeys(windows: List<UiWindow>): List<String> = buildList {
         fun walk(items: List<Item>) {
             for (item in items) {
-                val node = item.node
-                out += ObservationElement(item.observationKey(), item.window.id, node.bounds,
-                    node.enabled && (node.clickable || node.longClickable || node.editable))
+                add(item.observationKey())
                 walk(item.subs)
             }
         }
         for (window in windows) window.root?.let { walk(flatten(it, window, null)) }
-        return out
     }
 
     /**

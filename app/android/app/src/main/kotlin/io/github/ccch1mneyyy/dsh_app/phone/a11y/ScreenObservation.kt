@@ -40,23 +40,27 @@ internal class ScreenObservation(
 
     /** A canvas may have no numbered elements, but still has a usable, stable image viewport. */
     fun reusableCoordinates(previous: ScreenObservation): Boolean =
-        coordinateContextMatches(previous) && elements == previous.elements
+        coordinateMismatch(previous, null) == null
 
-    fun reusableLongPress(previous: ScreenObservation, x: Int, y: Int): Boolean {
-        if (!coordinateContextMatches(previous)) return false
-        if (elements == previous.elements) return true
-        val window = windows.firstOrNull { it.bounds.contains(x, y) } ?: return false
-        if (window.kind != WindowKind.APP || window.packageName != packageName) return false
+    fun reusableLongPress(previous: ScreenObservation, x: Int, y: Int): Boolean =
+        coordinateMismatch(previous, x to y) == null
+
+    fun coordinateMismatch(previous: ScreenObservation, longPressPoint: Pair<Int, Int>?): String? {
+        if (hasSecretFields || previous.hasSecretFields) return "sensitive_fields"
+        if (unavailable || previous.unavailable || incomplete || previous.incomplete) return "unreadable_or_incomplete_tree"
+        if (keyboardShown == null || keyboardShown != previous.keyboardShown) return "keyboard_changed_or_unknown"
+        if (!sameContext(previous)) return "app_window_or_screen_changed"
+        if (elements == previous.elements) return null
+        val (x, y) = longPressPoint ?: return "screen_elements_changed"
+        val window = windows.firstOrNull { it.bounds.contains(x, y) }
+        if (window == null || window.kind != WindowKind.APP || window.packageName != packageName)
+            return "point_outside_foreground_app"
         fun atPoint(observation: ScreenObservation) =
             observation.targets.filter { it.windowId == window.id && it.bounds.contains(x, y) }
         val local = atPoint(this)
-        return local.any { it.interactive && it.bounds.intersect(window.bounds) != window.bounds } &&
-            local == atPoint(previous)
+        if (local.none { it.interactive && it.bounds.intersect(window.bounds) != window.bounds })
+            return "no_local_interactive_target"
+        return if (local == atPoint(previous)) null else "local_target_changed"
     }
 
-    private fun coordinateContextMatches(previous: ScreenObservation): Boolean =
-        !unavailable && !previous.unavailable && !incomplete && !previous.incomplete &&
-            !hasSecretFields && !previous.hasSecretFields &&
-            keyboardShown != null && keyboardShown == previous.keyboardShown &&
-            sameContext(previous)
 }
