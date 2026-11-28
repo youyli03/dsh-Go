@@ -154,7 +154,7 @@ interface PhoneDriver {
     /** An omitted image argument may return an image only for this observation's poor tree.
      * Old drivers and explicit two-argument callers keep their original image behavior. */
     fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean): ScreenSnapshot = observe(detail, image)
-    fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean, inputFocus: Boolean): ScreenSnapshot =
+    fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean, treeDump: Boolean): ScreenSnapshot =
         observe(detail, image, automaticImage)
 
     /** Accepts only a driver-recorded candidate after the task's final screen filter, including

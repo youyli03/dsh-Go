@@ -254,7 +254,7 @@ class PhoneCore(
 
     /** Cheap refusals must not start a native task or acquire a screen lease. */
     internal fun rejection(name: String): ToolOutput? {
-        if (name !in PhoneToolCatalog.names && name != FOCUS_TEXT) {
+        if (name !in PhoneToolCatalog.names && name != FOCUS_TEXT && name != PhoneToolCatalog.SCREEN_DUMP) {
             // l10n:keep agent tool result
             return ToolOutput("没有这个手机工具：$name。可用：${PhoneToolCatalog.names.joinToString("、")}", isError = true)
         }
@@ -383,6 +383,7 @@ class PhoneCore(
                 PhoneToolCatalog.NOTIFY -> notify(a, owner)
                 PhoneToolCatalog.CLIPBOARD -> clipboard(a, owner)
                 PhoneToolCatalog.SCREEN -> screen(a, owner)
+                PhoneToolCatalog.SCREEN_DUMP -> screen(a, owner, treeDump = true)
                 PhoneToolCatalog.COLLECT -> collect(a, owner)
                 FOCUS_TEXT -> focusText(a, scope, owner)
                 PhoneToolCatalog.TAP, PhoneToolCatalog.TYPE, PhoneToolCatalog.SCROLL, PhoneToolCatalog.TAP_XY -> act(name, a, scope, owner)
@@ -853,6 +854,7 @@ class PhoneCore(
             PhoneToolCatalog.CALENDAR_LIST -> Either.Right(emptyList())
             PhoneToolCatalog.OPEN -> Either.Right(if (a.bool("background") == true)
                 listOf(PhoneScreen.MAIN, PhoneScreen.BACKGROUND) else listOf(PhoneScreen.MAIN))
+            PhoneToolCatalog.SCREEN_DUMP -> Either.Right(listOf(PhoneScreen.MAIN))
             PhoneToolCatalog.SCREEN -> Either.Right(listOf(if (a.bool("background") == true) PhoneScreen.BACKGROUND else PhoneScreen.MAIN))
             // Arbitrary system commands take the main/global unknown-app lease, without reading a screen.
             PhoneToolCatalog.INTENT, PhoneToolCatalog.ANDROID_SHELL -> Either.Right(listOf(PhoneScreen.MAIN))
@@ -894,7 +896,8 @@ class PhoneCore(
         return shown
     }
 
-    private fun screen(a: Args, owner: PhoneTasks.Owner): Out {
+    private fun screen(a: Args, owner: PhoneTasks.Owner, treeDump: Boolean = false): Out {
+        if (treeDump && !a.onlyKeys()) return Out("screen_dump 不接受参数。", error = true) // l10n:keep agent tool result
         if (!current(owner)) return stoppedOut("screen")
         val which = if (a.bool("background") == true) PhoneScreen.BACKGROUND else PhoneScreen.MAIN
         val summary = if (which == PhoneScreen.BACKGROUND) ui.get("phone_log_background_read", "读后台屏") else ui.get("phone_log_screen_read", "读屏") // l10n:keep test default
@@ -907,7 +910,7 @@ class PhoneCore(
         say(owner, if (which == PhoneScreen.BACKGROUND) ui.get("phone_reading_background", "DSH 正在看后台屏") else ui.get("phone_reading_screen", "DSH 正在看屏幕")) // l10n:keep test default
         if (!current(owner)) return stoppedOut(summary)
         val snap = driver.observe(detail = a.bool("detail") == true, image = a.strictBool("image") == true,
-            automaticImage = !a.provided("image"), inputFocus = a.strictBool("input_focus") == true)
+            automaticImage = !treeDump && !a.provided("image"), treeDump = treeDump)
         if (!current(owner) || !tasks.setAppIfCurrent(owner, snap.appLabel)) return stoppedOut(summary)
         val shown = returnedScreen(driver, snap, owner)
         val refused = shown !== snap
@@ -1411,7 +1414,7 @@ class PhoneCore(
             PhoneToolCatalog.APPS -> 15_000L
             PhoneToolCatalog.NOTIFY, PhoneToolCatalog.CLIPBOARD -> 10_000L
             PhoneToolCatalog.OPEN, PhoneToolCatalog.INTENT -> 25_000L
-            PhoneToolCatalog.SCREEN -> 12_000L
+            PhoneToolCatalog.SCREEN, PhoneToolCatalog.SCREEN_DUMP -> 12_000L
             PhoneToolCatalog.COLLECT -> 120_000L
             PhoneToolCatalog.HANDOFF -> 30_000L
             else -> 30_000L

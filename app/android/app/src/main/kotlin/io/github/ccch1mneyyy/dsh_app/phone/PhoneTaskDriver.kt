@@ -45,13 +45,11 @@ class PhoneTaskObservations(private val tasks: PhoneTasks) {
             current()
             return try { remember(driver.observe(detail, image)) } finally { syncCurrentScope() }
         }
-        override fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean): ScreenSnapshot {
+        override fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean): ScreenSnapshot =
+            observe(detail, image, automaticImage, treeDump = false)
+        override fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean, treeDump: Boolean): ScreenSnapshot {
             current()
-            return try { remember(driver.observe(detail, image, automaticImage)) } finally { syncCurrentScope() }
-        }
-        override fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean, inputFocus: Boolean): ScreenSnapshot {
-            current()
-            return try { remember(driver.observe(detail, image, automaticImage, inputFocus)) } finally { syncCurrentScope() }
+            return try { remember(driver.observe(detail, image, automaticImage, treeDump)) } finally { syncCurrentScope() }
         }
         override fun acceptVisualObservation(screenId: String) {
             current()
