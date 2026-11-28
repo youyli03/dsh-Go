@@ -9,10 +9,29 @@ class ScreenObservationTest {
     private fun observation(
         pkg: String = "example.app", window: Int = 1, bounds: Box = frame, keyboard: Boolean? = false,
         unavailable: Boolean = false, incomplete: Boolean = false, elements: List<String> = listOf("one"),
+        targets: List<ScreenFormat.ObservationElement> = emptyList(),
     ) = ScreenObservation(
         pkg, listOf(UiWindow(window, WindowKind.APP, pkg, null, bounds, null)), frame,
-        keyboard, unavailable, incomplete, elements,
+        keyboard, unavailable, incomplete, elements, targets,
     )
+
+    @Test fun longPressToleratesChangesOnlyAwayFromAnIdentifiableTarget() {
+        val target = ScreenFormat.ObservationElement("search", 1, Box(10, 20, 300, 80), true)
+        val banner = ScreenFormat.ObservationElement("old label", 1, Box(10, 200, 300, 260), false)
+        fun scene(first: ScreenFormat.ObservationElement, second: ScreenFormat.ObservationElement, window: Int = 1) =
+            observation(window = window, elements = listOf(first.key, second.key), targets = listOf(first, second))
+
+        val before = scene(target, banner)
+        val changedBanner = banner.copy(key = "new label")
+        val after = scene(target, changedBanner)
+        assertTrue(after.reusableLongPress(before, 100, 50))
+        assertFalse(after.reusableCoordinates(before))
+        assertFalse(after.reusableLongPress(before, 100, 230))
+        assertFalse(scene(target.copy(key = "moved", bounds = Box(20, 20, 310, 80)), changedBanner)
+            .reusableLongPress(before, 100, 50))
+        assertFalse(scene(target, changedBanner.copy(bounds = target.bounds)).reusableLongPress(before, 100, 50))
+        assertFalse(scene(target, changedBanner, window = 2).reusableLongPress(before, 100, 50))
+    }
 
     @Test fun emptyToEmptyCannotVerifyAnActionOrScrollEnd() {
         val before = observation(elements = emptyList())

@@ -9,6 +9,7 @@ internal class ScreenObservation(
     val unavailable: Boolean,
     val incomplete: Boolean,
     val elements: List<String>,
+    private val targets: List<ScreenFormat.ObservationElement> = emptyList(),
 ) {
     // A masked screenshot does not authorize gestures on a password/code page, even after approval.
     val hasSecretFields = secretFieldBounds(windows).isNotEmpty()
@@ -39,8 +40,23 @@ internal class ScreenObservation(
 
     /** A canvas may have no numbered elements, but still has a usable, stable image viewport. */
     fun reusableCoordinates(previous: ScreenObservation): Boolean =
+        coordinateContextMatches(previous) && elements == previous.elements
+
+    fun reusableLongPress(previous: ScreenObservation, x: Int, y: Int): Boolean {
+        if (!coordinateContextMatches(previous)) return false
+        if (elements == previous.elements) return true
+        val window = windows.firstOrNull { it.bounds.contains(x, y) } ?: return false
+        if (window.kind != WindowKind.APP || window.packageName != packageName) return false
+        fun atPoint(observation: ScreenObservation) =
+            observation.targets.filter { it.windowId == window.id && it.bounds.contains(x, y) }
+        val local = atPoint(this)
+        return local.any { it.interactive && it.bounds.intersect(window.bounds) != window.bounds } &&
+            local == atPoint(previous)
+    }
+
+    private fun coordinateContextMatches(previous: ScreenObservation): Boolean =
         !unavailable && !previous.unavailable && !incomplete && !previous.incomplete &&
             !hasSecretFields && !previous.hasSecretFields &&
             keyboardShown != null && keyboardShown == previous.keyboardShown &&
-            sameContext(previous) && elements == previous.elements
+            sameContext(previous)
 }

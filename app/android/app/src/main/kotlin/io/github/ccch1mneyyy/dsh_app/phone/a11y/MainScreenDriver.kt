@@ -1192,7 +1192,10 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
             if (unavailable(cap)) return ActionResult(false, "这一屏读不到内容（可能受敏感视图策略限制），不盲点。请 handoff。", toSnapshot(publish(cap, false)))
             // l10n:keep agent screen result
             val current = observation(cap)
-            if (!current.reusableCoordinates(snap.observation)) {
+            val matches = if (a.gesture == PhoneAction.CoordinateGesture.LONG)
+                current.reusableLongPress(snap.observation, point.first, point.second)
+            else current.reusableCoordinates(snap.observation)
+            if (!matches) {
                 val reason = if (current.hasSecretFields || snap.observation.hasSecretFields)
                     "当前或上次观察含密码 / 验证码 / 支付框，不执行坐标手势。请 handoff 交给用户。" // l10n:keep agent safety result
                 else "无法确认当前界面仍与截图一致，没有点击。请重新看屏幕。" // l10n:keep agent screen result
@@ -1474,10 +1477,13 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
 
     private fun unavailable(cap: Capture) = WindowContent.unavailable(cap.hiddenWindowTitle != null, cap.unreadableWindowTitle != null, cap.windows)
 
-    private fun observation(cap: Capture) = ScreenObservation(
-        cap.packageName, cap.windows, cap.screen, cap.keyboardShown, unavailable(cap), cap.truncated || cap.partial,
-        ScreenFormat.observationKeys(cap.windows),
-    )
+    private fun observation(cap: Capture): ScreenObservation {
+        val targets = ScreenFormat.observationElements(cap.windows)
+        return ScreenObservation(
+            cap.packageName, cap.windows, cap.screen, cap.keyboardShown, unavailable(cap), cap.truncated || cap.partial,
+            targets.map { it.key }, targets,
+        )
+    }
 
     private fun locate(cap: Capture, el: ScreenElement): IndexedElement? =
         ScreenFormat.index(cap.windows).singleOrNull { it.fingerprint == el.fingerprint }

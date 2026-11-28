@@ -220,10 +220,20 @@ object ScreenFormat {
     }
 
     /** Masked content/state for observation comparison, including elements outside the text budget. */
-    internal fun observationKeys(windows: List<UiWindow>): List<String> {
-        val out = mutableListOf<String>()
+    internal data class ObservationElement(val key: String, val windowId: Int, val bounds: Box, val interactive: Boolean)
+
+    internal fun observationKeys(windows: List<UiWindow>): List<String> =
+        observationElements(windows).map { it.key }
+
+    internal fun observationElements(windows: List<UiWindow>): List<ObservationElement> {
+        val out = mutableListOf<ObservationElement>()
         fun walk(items: List<Item>) {
-            for (item in items) { out += item.observationKey(); walk(item.subs) }
+            for (item in items) {
+                val node = item.node
+                out += ObservationElement(item.observationKey(), item.window.id, node.bounds,
+                    node.enabled && (node.clickable || node.longClickable || node.editable))
+                walk(item.subs)
+            }
         }
         for (window in windows) window.root?.let { walk(flatten(it, window, null)) }
         return out
