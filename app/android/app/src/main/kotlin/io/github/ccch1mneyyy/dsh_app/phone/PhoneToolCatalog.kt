@@ -296,7 +296,13 @@ object PhoneToolCatalog {
 
     val names: List<String> = tools.map { it.name }
 
-    fun listJson(): List<Map<String, Any?>> = tools.map { it.toJson() }
+    fun listJson(includeInputFocus: Boolean = false): List<Map<String, Any?>> = tools.map { tool ->
+        if (!includeInputFocus || tool.name != SCREEN) tool.toJson()
+        else Tool(tool.name, tool.description, tool.properties + (
+            // l10n:keep agent tool catalog
+            "input_focus" to bool("仅 Android 主屏：诊断系统当前输入焦点、是否可编辑及读屏是否包含它；不输入文字")
+        ), tool.required).toJson()
+    }
 
     /** Tools that act on a screen through a [PhoneDriver] (need accessibility or the background display). */
     val SCREEN_TOOLS = setOf(SCREEN, COLLECT, TAP, TYPE, SCROLL, KEY, TAP_XY, HANDOFF)

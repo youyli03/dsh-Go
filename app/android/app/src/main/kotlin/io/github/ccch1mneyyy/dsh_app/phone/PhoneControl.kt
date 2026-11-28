@@ -203,7 +203,7 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
             if (state.stopped) record.activeWorker?.interruptCurrent(record.tasks)
             prompts.stopTask(record.tasks)
         })
-    private val server = McpServer(PhoneToolCatalog.listJson(), { name, args, _ -> sessions.run(sessions.admit(null), name, args) }, SERVER_VERSION,
+    private val server = McpServer(PhoneToolCatalog.listJson(includeInputFocus = true), { name, args, _ -> sessions.run(sessions.admit(null), name, args) }, SERVER_VERSION,
         diagnostics = { args, caller -> RuntimeController.get(app).diagnosticsTool.call(args, caller) })
     private val bridge = PhoneBridge(server, { line -> logger(line) }, { call ->
         if (call.name == DiagnosticsTool.NAME) PhoneCallWork({ call.run() })

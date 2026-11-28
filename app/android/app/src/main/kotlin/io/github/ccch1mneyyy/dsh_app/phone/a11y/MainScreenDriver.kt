@@ -175,7 +175,10 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
 
     override fun observe(detail: Boolean, image: Boolean): ScreenSnapshot = observe(detail, image, automaticImage = false)
 
-    override fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean): ScreenSnapshot = synchronized(lock) {
+    override fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean): ScreenSnapshot =
+        observe(detail, image, automaticImage, inputFocus = false)
+
+    override fun observe(detail: Boolean, image: Boolean, automaticImage: Boolean, inputFocus: Boolean): ScreenSnapshot = synchronized(lock) {
         val start = SystemClock.uptimeMillis()
         val generation = abortGen
         availability().let { if (!it.ok) return blank(it.reason!!) }
@@ -250,10 +253,32 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
             }
             if (snap.screen.poorTree) text.append("\n").append(formatted?.text ?: LocalOcrBoundary.message(localText))
             if (secure) clearFocusCandidate()
+            if (inputFocus && !secure && !snap.hidden && !snap.unreadable && !snap.ownApp && !snap.protectedPage &&
+                !unavailable(cap)) {
+                text.append("\n").append(inputFocusDiagnostic(cap, snap))
+            }
             ScreenSnapshot(snap.id, text.toString(), snap.appLabel, snap.packageName, secure || snap.hidden, snap.screen.poorTree, bytes, mime,
                 readPackages = snap.readPackages, focus = snap.focus.takeUnless { secure },
                 imageReadPackages = imageReadPackages)
         } finally { cap.recycle() }
+    }
+
+    private fun inputFocusDiagnostic(cap: Capture, snap: Snapshot): String {
+        val window = cap.windows.firstOrNull()
+            ?: return "输入焦点：没有可检查的当前窗口。" // l10n:keep agent screen result
+        val root = window.root?.let { cap.native(it.ref) }
+        val focused = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: return "输入焦点：Android 未报告当前窗口的输入焦点。" // l10n:keep agent screen result
+        try {
+            if (focused.windowId != window.id || focused.packageName?.toString() != snap.packageName ||
+                focused.isPassword)
+                return "输入焦点：当前焦点不可报告。" // l10n:keep agent screen result
+            val element = snap.screen.elements.firstOrNull { cap.native(it.ref) == focused }
+            val resourceIdPresent = !focused.viewIdResourceName.isNullOrBlank()
+            return "输入焦点：可编辑=${focused.isEditable}，有资源 ID=$resourceIdPresent，读屏元素=${element?.id ?: "未列出"}，已记录输入目标=${snap.focus != null}。" // l10n:keep agent screen result
+        } finally {
+            releaseFocusNode(focused)
+        }
     }
 
     private fun ocrAllowed(cap: Capture, snap: Snapshot, gen: Long): Boolean =
